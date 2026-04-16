@@ -38,3 +38,6 @@ out/
 
 ### Kiro IDE ###
 .kiro/
+
+### Playwright ###
+.playwright-mcp/
