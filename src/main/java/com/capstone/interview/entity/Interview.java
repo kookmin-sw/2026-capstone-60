@@ -1,6 +1,7 @@
 package com.capstone.interview.entity;
 
 import jakarta.persistence.*;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -16,7 +17,6 @@ public class Interview {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // 회원 탈퇴 시 기록 보존 (ON DELETE SET NULL)
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "member_id")
     private Member member;
@@ -44,6 +44,33 @@ public class Interview {
 
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
+
+    @Builder
+    public Interview(Member member, Resume resume, CoverLetter coverLetter, String category) {
+        this.member = member;
+        this.resume = resume;
+        this.coverLetter = coverLetter;
+        this.category = category;
+        this.status = InterviewStatus.READY;
+    }
+
+    public void start() {
+        if (this.status != InterviewStatus.READY) {
+            throw new IllegalStateException("READY 상태에서만 시작할 수 있습니다. 현재: " + this.status);
+        }
+        this.status = InterviewStatus.IN_PROGRESS;
+    }
+
+    public void complete() {
+        if (this.status != InterviewStatus.IN_PROGRESS) {
+            throw new IllegalStateException("IN_PROGRESS 상태에서만 종료할 수 있습니다. 현재: " + this.status);
+        }
+        this.status = InterviewStatus.COMPLETED;
+    }
+
+    public void fail() {
+        this.status = InterviewStatus.FAILED;
+    }
 
     @PrePersist
     protected void onCreate() {
