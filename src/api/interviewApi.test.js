@@ -31,7 +31,9 @@ describe("interviewApi mock mode flow", () => {
     const ended = await endInterviewSession(sessionId, "USER_STOP");
     expect(ended.data.status).toBe("EVALUATING");
 
-    await expect(getInterviewResult(sessionId)).rejects.toThrow("평가 진행 중입니다.");
+    const pending = await getInterviewResult(sessionId);
+    expect(pending.pending).toBe(true);
+    expect(pending.message).toBe("평가 진행 중입니다.");
 
     const result = await getInterviewResult(sessionId);
     expect(result.success).toBe(true);

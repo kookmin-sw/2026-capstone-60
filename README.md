@@ -14,11 +14,31 @@ npm run dev
 `.env` 파일을 만들고 아래 값을 설정하세요.
 
 ```bash
-VITE_API_BASE_URL=https://api.yourdomain.com/v1/interviews
-VITE_AUTH_BASE_URL=https://api.yourdomain.com/v1/auth
+VITE_BACKEND_BASE_URL=http://172.20.10.2:8080
+VITE_API_BASE_URL=http://172.20.10.2:8080/v1/interviews
+VITE_AUTH_BASE_URL=http://172.20.10.2:8080/v1/auth
 VITE_AUTH_TOKEN=
 VITE_USE_MOCK=false
+VITE_USE_MOCK_AUTH=false
+VITE_USE_MOCK_INTERVIEW_SESSION=false
+VITE_USE_MOCK_INTERVIEW_RESULT=false
+VITE_USE_MOCK_INTERVIEW_HISTORY=false
 ```
+
+평가 진행 중 상태는 `GET /sessions/{sessionId}/result`에서 `200 + data.status=EVALUATING` 응답을 사용합니다.
+
+### 하이브리드 모드 예시 (현재 백엔드가 시작/종료만 구현된 경우)
+
+```bash
+VITE_USE_MOCK=false
+VITE_USE_MOCK_AUTH=true
+VITE_USE_MOCK_INTERVIEW_SESSION=false
+VITE_USE_MOCK_INTERVIEW_RESULT=true
+VITE_USE_MOCK_INTERVIEW_HISTORY=true
+```
+
+- 실백엔드: `POST /sessions`, `POST /sessions/{sessionId}/end`
+- mock: 로그인/내정보, 결과조회, 누적기록
 
 ## JWT 로그인 동작
 
@@ -106,7 +126,7 @@ npm run test
 
 - JWT 로그인 성공/실패 및 사용자 조회(mock) 확인
 - mock 모드 활성화 여부 확인
-- 세션 생성 -> 종료 -> 결과 폴링 재시도 후 성공 응답 확인
+- 세션 생성 -> 종료 -> 결과 폴링(pending -> success) 확인
 
 ## 구현 범위
 

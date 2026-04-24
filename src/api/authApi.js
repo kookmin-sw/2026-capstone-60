@@ -5,9 +5,11 @@ import {
   setAuthSession,
 } from "../auth/tokenStorage";
 
-const AUTH_BASE_URL =
-  import.meta.env.VITE_AUTH_BASE_URL || "https://api.yourdomain.com/v1/auth";
-const USE_MOCK = String(import.meta.env.VITE_USE_MOCK).toLowerCase() === "true";
+const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_BASE_URL || "http://172.20.10.2:8080";
+const AUTH_BASE_URL = import.meta.env.VITE_AUTH_BASE_URL || `${BACKEND_BASE_URL}/v1/auth`;
+const USE_MOCK_ALL = String(import.meta.env.VITE_USE_MOCK).toLowerCase() === "true";
+const USE_MOCK_AUTH =
+  USE_MOCK_ALL || String(import.meta.env.VITE_USE_MOCK_AUTH).toLowerCase() === "true";
 
 const mockUsers = [
   {
@@ -44,7 +46,7 @@ async function request(path, options = {}) {
 }
 
 export async function login(email, password) {
-  if (USE_MOCK) {
+  if (USE_MOCK_AUTH) {
     return mockLogin(email, password);
   }
   const payload = await request("/login", {
@@ -64,7 +66,7 @@ export async function login(email, password) {
 }
 
 export async function fetchMe() {
-  if (USE_MOCK) {
+  if (USE_MOCK_AUTH) {
     const user = getStoredUser();
     const token = getAccessToken();
     if (!token || !user) throw new Error("로그인이 필요합니다.");

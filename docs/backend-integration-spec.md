@@ -186,13 +186,15 @@ Response `200` (평가 완료):
 }
 ```
 
-Response `202` (평가 진행 중, 권장):
+Response `200` (평가 진행 중):
 
 ```json
 {
-  "success": false,
-  "code": "EVALUATING",
-  "message": "면접 평가가 진행 중입니다."
+  "success": true,
+  "data": {
+    "status": "EVALUATING",
+    "message": "면접 평가가 진행 중입니다."
+  }
 }
 ```
 
@@ -324,7 +326,7 @@ Response `200`:
 - [ ] JWT 인증 미들웨어 적용
 - [ ] `POST /v1/interviews/sessions` 구현 (`resumeIds`, `coverLetter` optional 처리)
 - [ ] `POST /v1/interviews/sessions/{sessionId}/end` 구현
-- [ ] `GET /v1/interviews/sessions/{sessionId}/result` 구현 (`202 EVALUATING` 권장)
+- [ ] `GET /v1/interviews/sessions/{sessionId}/result` 구현 (`200 + data.status=EVALUATING` 권장)
 - [ ] `POST /v1/interviews/results` 구현
 - [ ] `GET /v1/interviews/results` 구현 (본인 기록만)
 - [ ] `GET /v1/interviews/results/{recordId}` 구현 (본인 기록만)
@@ -338,3 +340,5 @@ Response `200`:
 - 면접 종료 후 결과 수신 시 기록 저장 API 호출
 - 기록 메뉴에서 목록/상세 조회
 - 기록 저장 실패는 결과 화면 표시를 막지 않음 (비차단 처리)
+- 결과 조회 API는 `success=true` 형태를 유지하며, 평가 진행 중에는 `data.status=EVALUATING`로 응답
+

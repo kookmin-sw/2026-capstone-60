@@ -1,8 +1,11 @@
 import { getStoredUser } from "../auth/tokenStorage";
 
+const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_BASE_URL || "http://172.20.10.2:8080";
 const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "https://api.yourdomain.com/v1/interviews";
-const USE_MOCK = String(import.meta.env.VITE_USE_MOCK).toLowerCase() === "true";
+  import.meta.env.VITE_API_BASE_URL || `${BACKEND_BASE_URL}/v1/interviews`;
+const USE_MOCK_ALL = String(import.meta.env.VITE_USE_MOCK).toLowerCase() === "true";
+const USE_MOCK_HISTORY =
+  USE_MOCK_ALL || String(import.meta.env.VITE_USE_MOCK_INTERVIEW_HISTORY).toLowerCase() === "true";
 const HISTORY_KEY = "interviewHistoryRecords";
 
 function buildHeaders() {
@@ -44,7 +47,7 @@ async function request(path, options = {}) {
 }
 
 export async function saveInterviewRecord(recordInput) {
-  if (USE_MOCK) {
+  if (USE_MOCK_HISTORY) {
     return saveMockInterviewRecord(recordInput);
   }
   return request("/results", {
@@ -54,14 +57,14 @@ export async function saveInterviewRecord(recordInput) {
 }
 
 export async function fetchInterviewRecords() {
-  if (USE_MOCK) {
+  if (USE_MOCK_HISTORY) {
     return fetchMockInterviewRecords();
   }
   return request("/results", { method: "GET" });
 }
 
 export async function fetchInterviewRecordDetail(recordId) {
-  if (USE_MOCK) {
+  if (USE_MOCK_HISTORY) {
     return fetchMockInterviewRecordDetail(recordId);
   }
   return request(`/results/${recordId}`, { method: "GET" });

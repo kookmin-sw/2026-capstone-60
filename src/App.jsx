@@ -127,7 +127,7 @@ export default function App() {
     const intervalId = window.setInterval(async () => {
       try {
         const response = await getInterviewResult(session.sessionId);
-        if (!response?.data || disposed) return;
+        if (disposed || response?.pending || !response?.data) return;
         setResult(response.data);
         try {
           await saveInterviewRecord({
@@ -140,8 +140,13 @@ export default function App() {
           // 기록 저장 실패가 결과 화면 전환을 막지 않도록 분리 처리한다.
         }
         setScreen(SCREEN.RESULT);
-      } catch {
-        // 평가 중간 단계(404/processing)는 폴링으로 재시도한다.
+      } catch (pollError) {
+        if (disposed) return;
+        if (pollError?.code === "EVALUATING" || pollError?.status === 202) return;
+        setError(
+          pollError?.message ||
+            "평가 결과 조회 중 일시적인 오류가 발생했습니다. 자동으로 재시도합니다."
+        );
       }
     }, 4000);
 
