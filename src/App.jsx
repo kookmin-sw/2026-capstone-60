@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { fetchMe, login, logout } from "./api/authApi";
 import {
   fetchInterviewRecordDetail,
@@ -6,6 +7,7 @@ import {
   saveInterviewRecord,
 } from "./api/interviewHistoryApi";
 import EvaluatingView from "./components/EvaluatingView";
+import HomeView from "./components/HomeView";
 import HistoryDetailView from "./components/HistoryDetailView";
 import HistoryListView from "./components/HistoryListView";
 import InterviewRoom from "./components/InterviewRoom";
@@ -19,18 +21,19 @@ import {
   isMockMode,
 } from "./api/interviewApi";
 
-const SCREEN = {
-  AUTH: "AUTH",
-  READY: "READY",
-  INTERVIEW: "INTERVIEW",
-  EVALUATING: "EVALUATING",
-  RESULT: "RESULT",
-  HISTORY: "HISTORY",
-  HISTORY_DETAIL: "HISTORY_DETAIL",
+const ROUTE = {
+  HOME: "/",
+  LOGIN: "/login",
+  SETUP: "/interview/setup",
+  ROOM: "/interview/room",
+  EVALUATING: "/interview/evaluating",
+  RESULT: "/interview/result",
+  HISTORY: "/history",
 };
 
 export default function App() {
-  const [screen, setScreen] = useState(SCREEN.AUTH);
+  const navigate = useNavigate();
+  const location = useLocation();
   const [session, setSession] = useState(null);
   const [result, setResult] = useState(null);
   const [startLoading, setStartLoading] = useState(false);
@@ -43,18 +46,32 @@ export default function App() {
   const [historyRecords, setHistoryRecords] = useState([]);
   const [historyDetailLoading, setHistoryDetailLoading] = useState(false);
   const [historyDetail, setHistoryDetail] = useState(null);
+  const [bootstrapping, setBootstrapping] = useState(true);
 
   useEffect(() => {
     async function bootstrapAuth() {
       try {
         const profile = await fetchMe();
         setUser(profile);
-        setScreen(SCREEN.READY);
+        if (location.pathname === ROUTE.LOGIN) {
+          navigate(ROUTE.HOME, { replace: true });
+        }
       } catch {
-        setScreen(SCREEN.AUTH);
+        if (
+          location.pathname.startsWith(ROUTE.SETUP) ||
+          location.pathname.startsWith(ROUTE.ROOM) ||
+          location.pathname.startsWith(ROUTE.EVALUATING) ||
+          location.pathname.startsWith(ROUTE.RESULT) ||
+          location.pathname.startsWith(ROUTE.HISTORY)
+        ) {
+          navigate(ROUTE.LOGIN, { replace: true });
+        }
+      } finally {
+        setBootstrapping(false);
       }
     }
     bootstrapAuth();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const startSession = async (payload) => {
@@ -69,7 +86,7 @@ export default function App() {
         durationMinutes: payload.durationMinutes,
         livekit: data.livekit,
       });
-      setScreen(SCREEN.INTERVIEW);
+      navigate(ROUTE.ROOM);
     } catch (sessionError) {
       setError(sessionError.message);
     } finally {
@@ -83,7 +100,7 @@ export default function App() {
       setError("");
       const authUser = await login(email, password);
       setUser(authUser);
-      setScreen(SCREEN.READY);
+      navigate(ROUTE.HOME);
     } catch (loginError) {
       setError(loginError.message);
     } finally {
@@ -99,7 +116,7 @@ export default function App() {
     setResult(null);
     setHistoryRecords([]);
     setHistoryDetail(null);
-    setScreen(SCREEN.AUTH);
+    navigate(ROUTE.HOME);
   };
 
   const endSession = useCallback(
@@ -109,7 +126,7 @@ export default function App() {
         setEnding(true);
         setError("");
         await endInterviewSession(session.sessionId, reason);
-        setScreen(SCREEN.EVALUATING);
+        navigate(ROUTE.EVALUATING);
       } catch (endError) {
         setError(endError.message);
       } finally {
@@ -120,7 +137,7 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (screen !== SCREEN.EVALUATING || !session?.sessionId) return undefined;
+    if (location.pathname !== ROUTE.EVALUATING || !session?.sessionId) return undefined;
 
     let disposed = false;
     setPolling(true);
@@ -139,7 +156,7 @@ export default function App() {
         } catch {
           // 기록 저장 실패가 결과 화면 전환을 막지 않도록 분리 처리한다.
         }
-        setScreen(SCREEN.RESULT);
+        navigate(ROUTE.RESULT);
       } catch (pollError) {
         if (disposed) return;
         if (pollError?.code === "EVALUATING" || pollError?.status === 202) return;
@@ -155,7 +172,13 @@ export default function App() {
       setPolling(false);
       window.clearInterval(intervalId);
     };
-  }, [screen, session?.durationMinutes, session?.jobField, session?.sessionId]);
+  }, [
+    location.pathname,
+    navigate,
+    session?.durationMinutes,
+    session?.jobField,
+    session?.sessionId,
+  ]);
 
   const openHistory = async () => {
     try {
@@ -163,7 +186,7 @@ export default function App() {
       setError("");
       const response = await fetchInterviewRecords();
       setHistoryRecords(response?.data || []);
-      setScreen(SCREEN.HISTORY);
+      navigate(ROUTE.HISTORY);
     } catch (historyError) {
       setError(historyError.message);
     } finally {
@@ -177,7 +200,7 @@ export default function App() {
       setError("");
       const response = await fetchInterviewRecordDetail(recordId);
       setHistoryDetail(response?.data || null);
-      setScreen(SCREEN.HISTORY_DETAIL);
+      navigate(`${ROUTE.HISTORY}/${recordId}`);
     } catch (detailError) {
       setError(detailError.message);
     } finally {
@@ -186,63 +209,136 @@ export default function App() {
   };
 
   const reset = () => {
-    setScreen(SCREEN.READY);
     setSession(null);
     setResult(null);
     setError("");
     setEnding(false);
     setPolling(false);
+    navigate(ROUTE.SETUP);
+  };
+
+  const openHistoryDetailById = useCallback(async (recordId) => {
+    try {
+      setHistoryDetailLoading(true);
+      setError("");
+      const response = await fetchInterviewRecordDetail(recordId);
+      setHistoryDetail(response?.data || null);
+    } catch (detailError) {
+      setError(detailError.message);
+    } finally {
+      setHistoryDetailLoading(false);
+    }
+  }, []);
+
+  const HistoryDetailRoute = () => {
+    const { recordId } = useParams();
+
+    useEffect(() => {
+      if (!recordId) return;
+      openHistoryDetailById(recordId);
+    }, [recordId, openHistoryDetailById]);
+
+    return (
+      <HistoryDetailView
+        loading={historyDetailLoading}
+        record={historyDetail}
+        onBack={openHistory}
+      />
+    );
   };
 
   const renderContent = () => {
-    if (screen === SCREEN.AUTH) {
-      return <LoginForm onLogin={signIn} loading={authLoading} />;
-    }
-
-    if (screen === SCREEN.READY) {
-      return <SessionSetupForm onSubmit={startSession} isSubmitting={startLoading} />;
-    }
-
-    if (screen === SCREEN.INTERVIEW && session) {
+    if (bootstrapping) {
       return (
-        <InterviewRoom
-          session={session}
-          onSessionEnd={endSession}
-          ending={ending}
-        />
+        <section className="card">
+          <p className="subtext">세션 정보를 확인 중입니다...</p>
+        </section>
       );
     }
 
-    if (screen === SCREEN.EVALUATING && session) {
-      return <EvaluatingView sessionId={session.sessionId} polling={polling} />;
-    }
-
-    if (screen === SCREEN.RESULT && result) {
-      return <ResultView result={result} onRestart={reset} onOpenHistory={openHistory} />;
-    }
-
-    if (screen === SCREEN.HISTORY) {
-      return (
-        <HistoryListView
-          loading={historyLoading}
-          records={historyRecords}
-          onSelectRecord={openHistoryDetail}
+    return (
+      <Routes>
+        <Route
+          path={ROUTE.HOME}
+          element={
+            <HomeView
+              user={user}
+              onStartInterview={() => navigate(ROUTE.SETUP)}
+              onLogin={() => navigate(ROUTE.LOGIN)}
+              onOpenHistory={openHistory}
+            />
+          }
         />
-      );
-    }
-
-    if (screen === SCREEN.HISTORY_DETAIL) {
-      return (
-        <HistoryDetailView
-          loading={historyDetailLoading}
-          record={historyDetail}
-          onBack={openHistory}
+        <Route
+          path={ROUTE.LOGIN}
+          element={
+            user ? <Navigate to={ROUTE.HOME} replace /> : <LoginForm onLogin={signIn} loading={authLoading} />
+          }
         />
-      );
-    }
-
-    return null;
+        <Route
+          path={ROUTE.SETUP}
+          element={
+            user ? (
+              <SessionSetupForm onSubmit={startSession} isSubmitting={startLoading} />
+            ) : (
+              <Navigate to={ROUTE.LOGIN} replace />
+            )
+          }
+        />
+        <Route
+          path={ROUTE.ROOM}
+          element={
+            user && session ? (
+              <InterviewRoom session={session} onSessionEnd={endSession} ending={ending} />
+            ) : (
+              <Navigate to={ROUTE.SETUP} replace />
+            )
+          }
+        />
+        <Route
+          path={ROUTE.EVALUATING}
+          element={
+            user && session ? (
+              <EvaluatingView sessionId={session.sessionId} polling={polling} />
+            ) : (
+              <Navigate to={ROUTE.SETUP} replace />
+            )
+          }
+        />
+        <Route
+          path={ROUTE.RESULT}
+          element={
+            user && result ? (
+              <ResultView result={result} onRestart={reset} onOpenHistory={openHistory} />
+            ) : (
+              <Navigate to={ROUTE.SETUP} replace />
+            )
+          }
+        />
+        <Route
+          path={ROUTE.HISTORY}
+          element={
+            user ? (
+              <HistoryListView
+                loading={historyLoading}
+                records={historyRecords}
+                onSelectRecord={openHistoryDetail}
+              />
+            ) : (
+              <Navigate to={ROUTE.LOGIN} replace />
+            )
+          }
+        />
+        <Route
+          path={`${ROUTE.HISTORY}/:recordId`}
+          element={user ? <HistoryDetailRoute /> : <Navigate to={ROUTE.LOGIN} replace />}
+        />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    );
   };
+
+  const showAuthActions = location.pathname !== ROUTE.LOGIN && Boolean(user);
 
   return (
     <main className="app-shell">
@@ -253,21 +349,28 @@ export default function App() {
           <strong>RAG 기반 AI 모의면접</strong>
         </div>
         <div className="header-actions">
-          {screen !== SCREEN.AUTH && (
+          {showAuthActions && (
             <>
               <button
-                className={`ghost-btn ${screen === SCREEN.READY ? "is-active" : ""}`}
+                className={`ghost-btn ${location.pathname === ROUTE.HOME ? "is-active" : ""}`}
+                type="button"
+                onClick={() => navigate(ROUTE.HOME)}
+              >
+                홈
+              </button>
+              <button
+                className={`ghost-btn ${
+                  location.pathname.startsWith(ROUTE.SETUP) || location.pathname.startsWith(ROUTE.ROOM)
+                    ? "is-active"
+                    : ""
+                }`}
                 type="button"
                 onClick={reset}
               >
                 면접 시작
               </button>
               <button
-                className={`ghost-btn ${
-                  screen === SCREEN.HISTORY || screen === SCREEN.HISTORY_DETAIL
-                    ? "is-active"
-                    : ""
-                }`}
+                className={`ghost-btn ${location.pathname.startsWith(ROUTE.HISTORY) ? "is-active" : ""}`}
                 type="button"
                 onClick={openHistory}
               >
@@ -276,7 +379,7 @@ export default function App() {
             </>
           )}
           {user && <span className="chip success">{user.name || user.email} 님</span>}
-          {screen !== SCREEN.AUTH && (
+          {showAuthActions && (
             <button className="ghost-btn" type="button" onClick={signOut}>
               로그아웃
             </button>
@@ -287,7 +390,7 @@ export default function App() {
         <div className="mock-badge">Mock Mode: 백엔드 없이 단독 테스트 중</div>
       )}
       {error && <div className="global-error">{error}</div>}
-      {renderContent()}
+      <section className="page-content">{renderContent()}</section>
     </main>
   );
 }
