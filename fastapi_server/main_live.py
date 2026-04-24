@@ -22,7 +22,12 @@ from .session_store import create_session, get_session
 
 
 # 1. FastAPI 앱 생성
-app = FastAPI(title="모의면접 AI 파이프라인 API (Live)")
+import os
+
+app = FastAPI(
+    title="모의면접 AI 파이프라인 API (Live)",
+    root_path=os.getenv("ROOT_PATH", ""),
+)
 
 # 2. CORS 설정
 app.add_middleware(

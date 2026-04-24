@@ -17,7 +17,12 @@ import uuid
 
 
 # 1. FastAPI 앱 생성
-app = FastAPI(title="모의면접 AI 파이프라인 API (Dummy)")
+import os
+
+app = FastAPI(
+    title="모의면접 AI 파이프라인 API (Dummy)",
+    root_path=os.getenv("ROOT_PATH", ""),
+)
 
 # 2. CORS 설정 (자바 서버나 프론트엔드에서 호출할 수 있도록 허용)
 app.add_middleware(
