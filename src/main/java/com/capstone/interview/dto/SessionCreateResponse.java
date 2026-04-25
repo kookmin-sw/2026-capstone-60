@@ -5,7 +5,7 @@ public record SessionCreateResponse(
     SessionCreateResponse.Data data
 ) {
     public record Data(
-        Long sessionId,
+        String sessionId,
         LiveKitInfo livekit
     ) {}
 
