@@ -18,7 +18,7 @@ public class Interview {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "member_id")
+    @JoinColumn(name = "member_id", nullable = true)
     private Member member;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -28,6 +28,9 @@ public class Interview {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "cover_letter_id")
     private CoverLetter coverLetter;
+
+    @Column(name = "session_id", unique = true, nullable = false, length = 50)
+    private String sessionId;
 
     @Column(nullable = false, length = 50)
     private String category;
@@ -46,11 +49,12 @@ public class Interview {
     private LocalDateTime updatedAt;
 
     @Builder
-    public Interview(Member member, Resume resume, CoverLetter coverLetter, String category) {
+    public Interview(Member member, Resume resume, CoverLetter coverLetter, String category, String sessionId) {
         this.member = member;
         this.resume = resume;
         this.coverLetter = coverLetter;
         this.category = category;
+        this.sessionId = sessionId;
         this.status = InterviewStatus.READY;
     }
 
