@@ -6,11 +6,13 @@ import com.capstone.interview.dto.SessionEndRequest;
 import com.capstone.interview.dto.SessionEndResponse;
 import com.capstone.interview.service.InterviewService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+@Slf4j
 @RestController
-@RequestMapping("/sessions")
+@RequestMapping("/v1/interviews/sessions")
 @RequiredArgsConstructor
 public class InterviewController {
 
@@ -18,13 +20,22 @@ public class InterviewController {
 
     @PostMapping
     public ResponseEntity<SessionCreateResponse> createSession(@RequestBody SessionCreateRequest request) {
-        return ResponseEntity.ok(interviewService.createSession(request));
+        log.info("[세션 생성 요청] jobField={}, resumeIds={}, coverLetter={}, durationMinutes={}",
+                request.jobField(), request.resumeIds(), request.coverLetter(), request.durationMinutes());
+
+        SessionCreateResponse response = interviewService.createSession(request);
+        log.info("[세션 생성 성공] sessionId={}", response.data().sessionId());
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/{sessionId}/end")
     public ResponseEntity<SessionEndResponse> endSession(
-            @PathVariable Long sessionId,
+            @PathVariable String sessionId,
             @RequestBody SessionEndRequest request) {
-        return ResponseEntity.ok(interviewService.endSession(sessionId, request.reason()));
+        log.info("[세션 종료 요청] sessionId={}, reason={}", sessionId, request.reason());
+
+        SessionEndResponse response = interviewService.endSession(sessionId, request.reason());
+        log.info("[세션 종료 성공] sessionId={}, status={}", sessionId, response.data().status());
+        return ResponseEntity.ok(response);
     }
 }
