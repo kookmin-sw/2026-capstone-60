@@ -12,6 +12,9 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env.loca
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 LLM_MODEL = os.getenv("LLM_MODEL", "anthropic.claude-3-5-sonnet-20241022-v2:0")
 
+# Knowledge Base
+KNOWLEDGE_BASE_ID = os.getenv("KNOWLEDGE_BASE_ID", "")
+
 # OpenAI (GPT 버전용)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
