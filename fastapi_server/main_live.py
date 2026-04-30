@@ -52,6 +52,7 @@ class InterviewStartRequest(BaseModel):
 class InterviewStartResponse(BaseModel):
     session_id: str
     initial_question: str
+    intent: str = ""  # 출제 의도
 
 
 class AnswerRequest(BaseModel):
@@ -64,6 +65,7 @@ class AnswerResponse(BaseModel):
     next_question: str
     is_tail_question: bool
     interview_status: str
+    intent: str = ""  # 출제 의도
 
 
 class FeedbackItem(BaseModel):
@@ -104,13 +106,14 @@ async def start_interview(request: InterviewStartRequest):
 
     # Bedrock Claude로 첫 질문 생성
     try:
-        first_question = generate_first_question(session)
+        result = generate_first_question(session)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM 호출 실패: {str(e)}")
 
     return InterviewStartResponse(
         session_id=session_id,
-        initial_question=first_question,
+        initial_question=result["question"],
+        intent=result["intent"],
     )
 
 
@@ -137,6 +140,7 @@ async def submit_answer(request: AnswerRequest):
         next_question=result["question"],
         is_tail_question=result["is_follow_up"],
         interview_status=result["interview_status"],
+        intent=result.get("intent", ""),
     )
 
 

@@ -32,8 +32,13 @@ def build_system_prompt(job_role: str, resume_text: str) -> str:
     )
 
 
-def generate_first_question(session: InterviewSession) -> str:
-    """첫 번째 면접 질문을 생성한다."""
+def generate_first_question(session: InterviewSession) -> dict:
+    """
+    첫 번째 면접 질문을 생성한다.
+
+    Returns:
+        {"question": str, "intent": str}
+    """
     client = _get_bedrock_client()
 
     response = client.converse(
@@ -48,9 +53,19 @@ def generate_first_question(session: InterviewSession) -> str:
         inferenceConfig={"temperature": 0.7, "maxTokens": 512},
     )
 
-    question = response["output"]["message"]["content"][0]["text"]
-    session.add_question(question, is_follow_up=False)
-    return question
+    result_text = response["output"]["message"]["content"][0]["text"]
+
+    # JSON 파싱 시도
+    try:
+        result = json.loads(result_text)
+        question = result["question"]
+        intent = result.get("intent", "")
+    except (json.JSONDecodeError, KeyError):
+        question = result_text
+        intent = ""
+
+    session.add_question(question, is_follow_up=False, intent=intent)
+    return {"question": question, "intent": intent}
 
 
 def generate_next_question(session: InterviewSession, user_answer: str) -> dict:
@@ -101,10 +116,12 @@ def generate_next_question(session: InterviewSession, user_answer: str) -> dict:
         result = json.loads(result_text)
         question = result["question"]
         is_follow_up = result.get("is_follow_up", False)
+        intent = result.get("intent", "")
     except (json.JSONDecodeError, KeyError):
         # JSON 파싱 실패 시 텍스트 그대로 사용
         question = result_text
         is_follow_up = False
+        intent = ""
 
     # 꼬리질문 횟수 관리
     if is_follow_up:
@@ -117,7 +134,7 @@ def generate_next_question(session: InterviewSession, user_answer: str) -> dict:
         session.question_number += 1
         session.follow_up_count = 0
 
-    session.add_question(question, is_follow_up=is_follow_up)
+    session.add_question(question, is_follow_up=is_follow_up, intent=intent)
 
     # 다음 질문 후 종료 체크
     is_finished = session.question_number > MAX_QUESTIONS
@@ -129,6 +146,7 @@ def generate_next_question(session: InterviewSession, user_answer: str) -> dict:
         "is_follow_up": is_follow_up,
         "is_finished": is_finished,
         "interview_status": "COMPLETED" if is_finished else "IN_PROGRESS",
+        "intent": intent,
     }
 
 

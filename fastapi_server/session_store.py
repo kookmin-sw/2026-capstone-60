@@ -12,6 +12,7 @@ class ConversationTurn:
     question: str
     answer: str = ""
     is_follow_up: bool = False
+    intent: str = ""  # 출제 의도
 
 
 @dataclass
@@ -26,11 +27,12 @@ class InterviewSession:
     history: list[ConversationTurn] = field(default_factory=list)
     is_finished: bool = False
 
-    def add_question(self, question: str, is_follow_up: bool = False):
+    def add_question(self, question: str, is_follow_up: bool = False, intent: str = ""):
         """새 질문을 기록한다."""
         self.history.append(ConversationTurn(
             question=question,
             is_follow_up=is_follow_up,
+            intent=intent,
         ))
 
     def add_answer(self, answer: str):
@@ -58,6 +60,8 @@ class InterviewSession:
         lines = []
         for i, turn in enumerate(self.history, 1):
             lines.append(f"[질문 {i}] {turn.question}")
+            if turn.intent:
+                lines.append(f"[출제 의도] {turn.intent}")
             if turn.answer:
                 lines.append(f"[답변 {i}] {turn.answer}")
             lines.append("")
