@@ -22,7 +22,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .anyRequest().permitAll()); // 모든 요청 허용. 다음 이슈에서 경로에 따라 공개여부 설정
 
-        return
+        return http.build();
     }
 
     @Bean
