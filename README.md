@@ -1,15 +1,16 @@
 # AI 모의면접 질문 생성 서버
 
-자바 메인 서버와 HTTP 통신하는 AI 전용 FastAPI 서버입니다.
-AWS Bedrock Claude + Knowledge Base(RAG)를 사용하여 이력서 기반 면접 질문과 꼬리질문을 생성합니다.
+자바 메인 서버 및 LiveKit Agent와 HTTP 통신하는 AI 전용 FastAPI 서버입니다.
+AWS Bedrock Claude + Knowledge Base(RAG)를 사용하여 이력서 기반 면접 질문, 꼬리질문, 다음 주제 질문을 생성합니다.
 
 ## 이 서버가 하는 일
 
-1. **첫 질문 생성** — 이력서와 직무 정보를 받아 Knowledge Base에서 관련 면접 자료를 검색하고, Claude가 이를 참고하여 현실적인 첫 면접 질문을 생성합니다.
-2. **꼬리질문 생성** — 지원자의 답변을 받아 Knowledge Base에서 심화 자료를 검색하고, Claude가 답변의 허점이나 모호한 부분을 파고드는 꼬리질문을 생성합니다.
-3. **출제 의도 제공** — 모든 질문에 "왜 이 질문을 했는지"(intent)를 함께 반환합니다.
+1. **첫 질문 생성** — 이력서와 직무 정보를 받아 KB에서 관련 면접 자료를 검색하고, Claude가 현실적인 첫 면접 질문을 생성합니다.
+2. **꼬리질문 생성** — 지원자의 답변을 받아 KB에서 심화 자료를 검색하고, Claude가 답변의 허점을 파고드는 꼬리질문을 생성합니다.
+3. **다음 주제 질문 생성** — 이전 대화에서 이미 다룬 내용을 자동으로 파악하여, 중복 없이 새로운 주제의 질문을 생성합니다.
+4. **출제 의도 제공** — 모든 질문에 "왜 이 질문을 했는지"(intent)를 함께 반환합니다.
 
-꼬리질문을 할지 말지 판단하는 것은 이 서버의 역할이 아닙니다. 외부(다른 AI 모듈)에서 판단한 뒤, 꼬리질문이 필요할 때만 `/answer`를 호출합니다.
+꼬리질문을 할지 말지 판단하는 것은 이 서버의 역할이 아닙니다. 외부(다른 AI 모듈)에서 판단한 뒤, 꼬리질문이 필요하면 `/answer`를, 다음 주제로 넘어가면 `/next-question`을 호출합니다.
 
 ## 프로젝트 구조
 
@@ -17,7 +18,7 @@ AWS Bedrock Claude + Knowledge Base(RAG)를 사용하여 이력서 기반 면접
 ├── fastapi_server/
 │   ├── main.py            # FastAPI 앱, 엔드포인트 정의
 │   ├── config.py          # 환경 변수 로드 (AWS 리전, 모델, KB ID)
-│   ├── prompts.py         # 면접관 시스템 프롬프트, 첫질문/꼬리질문 프롬프트 템플릿
+│   ├── prompts.py         # 면접관 시스템 프롬프트, 질문 생성 프롬프트 템플릿
 │   ├── session_store.py   # 세션별 대화 기록 관리 (메모리 기반)
 │   └── llm_service.py     # KB 검색(Retrieve) + Bedrock Claude 호출
 ├── pipeline/
@@ -38,15 +39,32 @@ Velog에서 백엔드 면접 자료 크롤링
     → Knowledge Base가 자동으로 청크 분할 + 임베딩 + 인덱싱
 
 [면접 서버 - 실시간]
+
 자바 서버 → POST /start (이력서 + 직무)
-              → KB에서 이력서 기술 스택 관련 면접 자료 검색
-              → Claude가 이력서 + KB 자료를 참고하여 첫 질문 생성
+              → KB 검색 → Claude 첫 질문 생성
               ← {session_id, initial_question, intent}
 
-자바 서버 → POST /answer (session_id + 답변)
-              → KB에서 답변 내용 관련 심화 자료 검색
-              → Claude가 대화 이력 + KB 자료를 참고하여 꼬리질문 생성
-              ← {follow_up_question, intent}
+LiveKit Agent → POST /answer (session_id + 답변)
+                 → KB 검색 → Claude 꼬리질문 생성
+                 ← {follow_up_question, intent}
+
+LiveKit Agent → POST /next-question (session_id + 마지막 답변)
+                 → 이미 다룬 주제 파악 → KB 검색 → Claude 새 주제 질문 생성
+                 ← {question, intent}
+```
+
+## LiveKit Agent 연동 흐름
+
+```
+[면접 시작]
+자바 서버 → /start → 첫 질문 텍스트 → LiveKit Agent → TTS → 사용자에게 음성 송출
+
+[면접 진행 - 반복]
+사용자 음성 답변 → LiveKit Agent STT → 텍스트 변환
+    → 판단 AI가 결정:
+        ├── 꼬리질문 필요 → /answer 호출 → 꼬리질문 텍스트
+        └── 다음 주제로   → /next-question 호출 → 새 주제 질문 텍스트
+    → LiveKit Agent TTS → 사용자에게 음성 송출
 ```
 
 ## API 엔드포인트
@@ -92,14 +110,29 @@ Velog에서 백엔드 면접 자료 크롤링
 }
 ```
 
-### GET `/health`
+### POST `/api/v1/interview/next-question`
 
-서버 상태 확인용.
+다음 주제로 넘어갈 때 호출합니다. 이전에 다룬 내용을 자동으로 피하고 새로운 주제로 질문합니다.
+
+**요청:**
+```json
+{
+  "session_id": "uuid-string",
+  "user_answer": "마지막 답변 텍스트 (선택, 빈 문자열 가능)"
+}
+```
 
 **응답:**
 ```json
-{"status": "ok", "service": "ai-interview-server", "mode": "live"}
+{
+  "question": "Docker를 사용하셨다고 했는데, 컨테이너 오케스트레이션은 어떻게 하셨나요?",
+  "intent": "배포 및 인프라 운영 경험 확인"
+}
 ```
+
+### GET `/health`
+
+서버 상태 확인용.
 
 ## 각 파일 상세 설명
 
@@ -110,14 +143,16 @@ Velog에서 백엔드 면접 자료 크롤링
 - `KNOWLEDGE_BASE_ID` — KB에서 자료를 검색할 때 사용하는 ID
 
 ### `prompts.py`
-Claude에게 보내는 프롬프트 템플릿 3개:
+Claude에게 보내는 프롬프트 템플릿:
 - `INTERVIEWER_SYSTEM_PROMPT` — 면접관 페르소나 + 이력서/직무 정보
-- `FIRST_QUESTION_PROMPT` — 첫 질문 생성 지시 + KB 참고 자료 삽입 위치
-- `FOLLOW_UP_PROMPT` — 꼬리질문 생성 지시 + KB 참고 자료 삽입 위치
+- `FIRST_QUESTION_PROMPT` — 첫 질문 생성 지시 + KB 참고 자료
+- `FOLLOW_UP_PROMPT` — 꼬리질문 생성 지시 + KB 참고 자료
+- `NEXT_QUESTION_PROMPT` — 새 주제 질문 생성 지시 + 이미 다룬 주제 목록 + KB 참고 자료
 
 ### `session_store.py`
 `session_id` 기준으로 대화 기록을 메모리에 저장합니다:
 - 질문, 답변, 출제 의도를 턴 단위로 기록
+- `/next-question`에서 이미 다룬 주제를 파악하는 데 사용
 - 꼬리질문 생성 시 이전 대화 이력을 Claude에게 함께 전달하여 맥락 유지
 
 ### `llm_service.py`
@@ -125,6 +160,7 @@ Claude에게 보내는 프롬프트 템플릿 3개:
 1. `_retrieve_from_kb()` — Knowledge Base Retrieve API로 관련 자료 검색
 2. `generate_first_question()` — KB 검색 + Claude 호출 → 첫 질문 생성
 3. `generate_follow_up()` — KB 검색 + Claude 호출 → 꼬리질문 생성
+4. `generate_next_topic()` — 이미 다룬 주제 파악 + KB 검색 + Claude 호출 → 새 주제 질문 생성
 
 ### `pipeline/crawler.py`
 Velog GraphQL API로 백엔드 면접 관련 글을 크롤링합니다.
@@ -164,7 +200,6 @@ python -m pipeline.run_crawl --sync --kb-id MVJMHC0YM2 --data-source-id RDWXCFKH
 ## EC2 배포 시 필요한 권한
 
 EC2 IAM Role에 다음 권한이 필요합니다:
-- `bedrock:InvokeModel` — Claude 모델 호출
 - `bedrock:Converse` — Claude 대화 API
 - `bedrock:Retrieve` — Knowledge Base 검색
 - `s3:PutObject` — 크롤링 데이터 업로드 (파이프라인 실행 시)

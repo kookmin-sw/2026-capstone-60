@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 
-from .llm_service import build_system_prompt, generate_first_question, generate_follow_up
+from .llm_service import build_system_prompt, generate_first_question, generate_follow_up, generate_next_topic
 from .session_store import create_session, get_session
 
 
@@ -114,6 +114,34 @@ async def submit_answer(request: AnswerRequest):
 
     return AnswerResponse(
         follow_up_question=result["question"],
+        intent=result.get("intent", ""),
+    )
+
+
+class NextQuestionRequest(BaseModel):
+    session_id: str
+    user_answer: str = ""  # 마지막 답변 (있으면 기록)
+
+
+class NextQuestionResponse(BaseModel):
+    question: str
+    intent: str = ""
+
+
+@app.post("/api/v1/interview/next-question", response_model=NextQuestionResponse)
+async def next_question(request: NextQuestionRequest):
+    """이전에 다루지 않은 새로운 주제로 질문을 생성합니다."""
+    session = get_session(request.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+
+    try:
+        result = generate_next_topic(session, request.user_answer)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"LLM 호출 실패: {str(e)}")
+
+    return NextQuestionResponse(
+        question=result["question"],
         intent=result.get("intent", ""),
     )
 

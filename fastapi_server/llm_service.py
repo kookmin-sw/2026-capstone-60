@@ -12,6 +12,7 @@ from .prompts import (
     INTERVIEWER_SYSTEM_PROMPT,
     FIRST_QUESTION_PROMPT,
     FOLLOW_UP_PROMPT,
+    NEXT_QUESTION_PROMPT,
 )
 from .session_store import InterviewSession
 
@@ -160,6 +161,71 @@ def generate_follow_up(session: InterviewSession, user_answer: str) -> dict:
         intent = ""
 
     session.add_question(question, is_follow_up=True, intent=intent)
+
+    return {
+        "question": question,
+        "intent": intent,
+    }
+
+
+def generate_next_topic(session: InterviewSession, user_answer: str = "") -> dict:
+    """
+    이전 대화에서 다루지 않은 새로운 주제로 질문을 생성한다.
+    이미 물어본 내용을 자동으로 파악하여 중복을 방지한다.
+
+    Args:
+        session: 현재 면접 세션
+        user_answer: 마지막 답변 (있으면 기록)
+
+    Returns:
+        {"question": str, "intent": str}
+    """
+    # 마지막 답변이 있으면 기록
+    if user_answer:
+        session.add_answer(user_answer)
+
+    client = _get_bedrock_client()
+
+    # 이미 다룬 주제 목록 생성
+    asked_topics = "\n".join(
+        f"- 질문: {turn.question} (의도: {turn.intent})"
+        for turn in session.history
+    )
+
+    # KB에서 이력서 관련 새로운 면접 자료 검색
+    reference_data = _retrieve_from_kb(
+        f"{session.job_role} 면접 질문 {session.resume_text[:200]}"
+    )
+
+    prompt = NEXT_QUESTION_PROMPT.format(
+        asked_topics=asked_topics if asked_topics else "(아직 질문한 내용 없음)",
+        reference_data=reference_data,
+    )
+
+    messages = session.get_messages()
+    messages.append({
+        "role": "user",
+        "content": [{"text": prompt}],
+    })
+
+    response = client.converse(
+        modelId=LLM_MODEL,
+        system=[{"text": session.system_prompt}],
+        messages=messages,
+        inferenceConfig={"temperature": 0.7, "maxTokens": 512},
+    )
+
+    result_text = response["output"]["message"]["content"][0]["text"]
+
+    try:
+        result = json.loads(result_text)
+        question = result["question"]
+        intent = result.get("intent", "")
+    except (json.JSONDecodeError, KeyError):
+        question = result_text
+        intent = ""
+
+    session.add_question(question, is_follow_up=False, intent=intent)
 
     return {
         "question": question,
