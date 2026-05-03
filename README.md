@@ -1,38 +1,138 @@
-# AI 모의면접 서버
+# AI 모의면접 질문 생성 서버
 
 자바 메인 서버와 HTTP 통신하는 AI 전용 FastAPI 서버입니다.
-Bedrock Claude + Knowledge Base(RAG)를 사용하여 면접 질문 생성, 꼬리질문, 피드백 리포트를 제공합니다.
+AWS Bedrock Claude + Knowledge Base(RAG)를 사용하여 이력서 기반 면접 질문과 꼬리질문을 생성합니다.
+
+## 이 서버가 하는 일
+
+1. **첫 질문 생성** — 이력서와 직무 정보를 받아 Knowledge Base에서 관련 면접 자료를 검색하고, Claude가 이를 참고하여 현실적인 첫 면접 질문을 생성합니다.
+2. **꼬리질문 생성** — 지원자의 답변을 받아 Knowledge Base에서 심화 자료를 검색하고, Claude가 답변의 허점이나 모호한 부분을 파고드는 꼬리질문을 생성합니다.
+3. **출제 의도 제공** — 모든 질문에 "왜 이 질문을 했는지"(intent)를 함께 반환합니다.
+
+꼬리질문을 할지 말지 판단하는 것은 이 서버의 역할이 아닙니다. 외부(다른 AI 모듈)에서 판단한 뒤, 꼬리질문이 필요할 때만 `/answer`를 호출합니다.
 
 ## 프로젝트 구조
 
 ```
-├── fastapi_server/          # FastAPI 서버
-│   ├── main.py              # 더미 API (통신 테스트용)
-│   ├── main_live.py         # 실제 Bedrock Claude 연동
-│   ├── config.py            # 서버 설정 (AWS, KB, 모델)
-│   ├── prompts.py           # 프롬프트 템플릿
-│   ├── session_store.py     # 세션 관리 (대화 기록)
-│   └── llm_service.py       # Bedrock Claude + KB 검색 호출
-├── pipeline/                # 크롤링 파이프라인
-│   ├── crawler.py           # Velog 백엔드 면접 자료 크롤링
-│   ├── s3_uploader.py       # S3 업로드 + KB 동기화
-│   └── run_crawl.py         # 파이프라인 실행 스크립트
+├── fastapi_server/
+│   ├── main.py            # FastAPI 앱, 엔드포인트 정의
+│   ├── config.py          # 환경 변수 로드 (AWS 리전, 모델, KB ID)
+│   ├── prompts.py         # 면접관 시스템 프롬프트, 첫질문/꼬리질문 프롬프트 템플릿
+│   ├── session_store.py   # 세션별 대화 기록 관리 (메모리 기반)
+│   └── llm_service.py     # KB 검색(Retrieve) + Bedrock Claude 호출
+├── pipeline/
+│   ├── crawler.py         # Velog 백엔드 면접 자료 크롤링
+│   ├── s3_uploader.py     # 크롤링 결과를 S3에 .txt로 업로드
+│   └── run_crawl.py       # 크롤링 파이프라인 실행 스크립트
 ├── requirements.txt
-├── .env.example             # 환경 변수 템플릿
+├── .env.example           # 환경 변수 템플릿 (실제 값 포함)
 └── README.md
 ```
 
-## 아키텍처
+## 동작 흐름
 
 ```
-[크롤링 파이프라인]
-Velog 크롤링 → S3 업로드(.txt) → Knowledge Base 자동 인덱싱
+[크롤링 파이프라인 - 1회성 또는 주기적 실행]
+Velog에서 백엔드 면접 자료 크롤링
+    → S3 버킷에 .txt 업로드
+    → Knowledge Base가 자동으로 청크 분할 + 임베딩 + 인덱싱
 
-[면접 서버]
-자바 서버 → FastAPI → KB에서 관련 자료 검색(Retrieve)
-                    → Claude에게 이력서 + KB 자료 + 대화 이력 전달
-                    → 질문/꼬리질문/리포트 생성
+[면접 서버 - 실시간]
+자바 서버 → POST /start (이력서 + 직무)
+              → KB에서 이력서 기술 스택 관련 면접 자료 검색
+              → Claude가 이력서 + KB 자료를 참고하여 첫 질문 생성
+              ← {session_id, initial_question, intent}
+
+자바 서버 → POST /answer (session_id + 답변)
+              → KB에서 답변 내용 관련 심화 자료 검색
+              → Claude가 대화 이력 + KB 자료를 참고하여 꼬리질문 생성
+              ← {follow_up_question, intent}
 ```
+
+## API 엔드포인트
+
+### POST `/api/v1/interview/start`
+
+면접을 시작합니다. 이력서를 분석하여 첫 질문을 생성합니다.
+
+**요청:**
+```json
+{
+  "job_role": "백엔드 개발자",
+  "resume_text": "이력서 텍스트 전체"
+}
+```
+
+**응답:**
+```json
+{
+  "session_id": "uuid-string",
+  "initial_question": "이력서에 Redis 분산 락을 사용하셨다고 했는데, 왜 Redis를 선택하셨나요?",
+  "intent": "기술 선택 이유와 대안 기술 비교 능력 확인"
+}
+```
+
+### POST `/api/v1/interview/answer`
+
+답변을 받아 꼬리질문을 생성합니다. 꼬리질문이 필요하다고 판단된 경우에만 호출합니다.
+
+**요청:**
+```json
+{
+  "session_id": "uuid-string",
+  "user_answer": "지원자의 답변 텍스트"
+}
+```
+
+**응답:**
+```json
+{
+  "follow_up_question": "분산 락의 TTL을 어떻게 설정하셨나요? 데드락 상황은 어떻게 처리하셨나요?",
+  "intent": "분산 락 운영 경험과 예외 처리 능력 확인"
+}
+```
+
+### GET `/health`
+
+서버 상태 확인용.
+
+**응답:**
+```json
+{"status": "ok", "service": "ai-interview-server", "mode": "live"}
+```
+
+## 각 파일 상세 설명
+
+### `config.py`
+`.env.local`에서 환경 변수를 읽어옵니다:
+- `AWS_REGION` — Bedrock과 KB가 있는 AWS 리전
+- `LLM_MODEL` — 사용할 Claude 모델 ID
+- `KNOWLEDGE_BASE_ID` — KB에서 자료를 검색할 때 사용하는 ID
+
+### `prompts.py`
+Claude에게 보내는 프롬프트 템플릿 3개:
+- `INTERVIEWER_SYSTEM_PROMPT` — 면접관 페르소나 + 이력서/직무 정보
+- `FIRST_QUESTION_PROMPT` — 첫 질문 생성 지시 + KB 참고 자료 삽입 위치
+- `FOLLOW_UP_PROMPT` — 꼬리질문 생성 지시 + KB 참고 자료 삽입 위치
+
+### `session_store.py`
+`session_id` 기준으로 대화 기록을 메모리에 저장합니다:
+- 질문, 답변, 출제 의도를 턴 단위로 기록
+- 꼬리질문 생성 시 이전 대화 이력을 Claude에게 함께 전달하여 맥락 유지
+
+### `llm_service.py`
+실제 AI 호출을 담당합니다:
+1. `_retrieve_from_kb()` — Knowledge Base Retrieve API로 관련 자료 검색
+2. `generate_first_question()` — KB 검색 + Claude 호출 → 첫 질문 생성
+3. `generate_follow_up()` — KB 검색 + Claude 호출 → 꼬리질문 생성
+
+### `pipeline/crawler.py`
+Velog GraphQL API로 백엔드 면접 관련 글을 크롤링합니다.
+10개 키워드(Spring 면접, Java 면접, Redis 면접 등)를 순회하며 수집합니다.
+
+### `pipeline/s3_uploader.py`
+크롤링한 글을 `.txt` 파일로 S3에 업로드합니다.
+파일 상단에 메타데이터(제목, 출처, 주제)를 포함시켜 KB가 맥락을 유지하도록 합니다.
 
 ## 실행 방법
 
@@ -44,65 +144,36 @@ pip install -r requirements.txt
 ### 2. 환경 변수 설정
 ```bash
 cp .env.example .env.local
-# .env.local에 아래 항목 입력:
-# - AWS_REGION
-# - S3_BUCKET_NAME, S3_PREFIX
-# - KNOWLEDGE_BASE_ID
-# EC2 IAM Role 사용 시 AWS 키는 불필요
+# EC2 IAM Role 사용 시 AWS 키는 주석 처리된 상태로 두면 됨
 ```
 
 ### 3. 서버 실행
 ```bash
-# 더미 서버 (통신 테스트용, AWS 불필요)
-python -m uvicorn fastapi_server.main:app --host 0.0.0.0 --port 8000
-
-# 실제 LLM 서버 (Bedrock + Knowledge Base)
-python -m uvicorn fastapi_server.main_live:app --host 0.0.0.0 --port 8000 --root-path /proxy/8000
+python -m uvicorn fastapi_server.main:app --host 0.0.0.0 --port 8000 --root-path /proxy/8000
 ```
 
-### 4. 크롤링 파이프라인 실행
+### 4. 크롤링 파이프라인 실행 (KB 데이터 축적)
 ```bash
-# 백엔드 면접 자료 크롤링 → S3 업로드
+# 크롤링 + S3 업로드
 python -m pipeline.run_crawl
 
-# 크롤링 + Knowledge Base 동기화까지
-python -m pipeline.run_crawl --sync --kb-id <KB_ID> --data-source-id <DS_ID>
+# 크롤링 + S3 업로드 + KB 동기화
+python -m pipeline.run_crawl --sync --kb-id MVJMHC0YM2 --data-source-id RDWXCFKHMW
 ```
 
-## API 엔드포인트
+## EC2 배포 시 필요한 권한
 
-| 메서드 | 경로 | 설명 |
-|--------|------|------|
-| POST | `/api/v1/interview/start` | 면접 시작 (이력서 입력 → 첫 질문 + 출제 의도) |
-| POST | `/api/v1/interview/answer` | 답변 제출 → 꼬리질문/다음 질문 + 출제 의도 |
-| GET | `/api/v1/interview/{session_id}/report` | 피드백 리포트 |
-| GET | `/health` | 헬스체크 |
+EC2 IAM Role에 다음 권한이 필요합니다:
+- `bedrock:InvokeModel` — Claude 모델 호출
+- `bedrock:Converse` — Claude 대화 API
+- `bedrock:Retrieve` — Knowledge Base 검색
+- `s3:PutObject` — 크롤링 데이터 업로드 (파이프라인 실행 시)
+- `bedrock:StartIngestionJob` — KB 동기화 (--sync 옵션 사용 시)
 
-## 응답 예시
+## 기술 스택
 
-`/start` 응답:
-```json
-{
-  "session_id": "uuid",
-  "initial_question": "Redis 분산 락을 선택하신 이유가 무엇인가요?",
-  "intent": "기술 선택 이유와 대안 기술 비교 능력 확인"
-}
-```
-
-`/answer` 응답:
-```json
-{
-  "next_question": "분산 락 외에 다른 동시성 제어 방법은 고려해보셨나요?",
-  "is_tail_question": true,
-  "interview_status": "IN_PROGRESS",
-  "intent": "대안 기술에 대한 이해도 평가"
-}
-```
-
-## EC2 배포 시 참고
-
-- IAM Role에 `bedrock:InvokeModel`, `bedrock:Converse`, `bedrock:Retrieve` 권한 필요
-- Bedrock 콘솔에서 Claude 3.5 Sonnet 모델 접근 권한 활성화
-- Knowledge Base 생성 후 S3 버킷을 데이터 소스로 연결
-- 보안 그룹에서 포트 8000 인바운드 허용
-- `--host 0.0.0.0` 필수 (외부 접근 허용)
+- **서버**: FastAPI + Uvicorn
+- **LLM**: AWS Bedrock Claude 3.5 Sonnet
+- **RAG**: AWS Bedrock Knowledge Base (Retrieve API)
+- **데이터 저장**: Amazon S3
+- **크롤링**: Velog GraphQL API + requests
