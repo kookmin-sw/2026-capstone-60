@@ -4,65 +4,59 @@ import {
   getStoredUser,
   setAuthSession,
 } from "../auth/tokenStorage";
+import { fetchWithAuth, fetchWithoutAuth } from "./apiClient";
 
-const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_BASE_URL || "http://172.20.10.2:8080";
-const AUTH_BASE_URL = import.meta.env.VITE_AUTH_BASE_URL || `${BACKEND_BASE_URL}/v1/auth`;
-const USE_MOCK_ALL = String(import.meta.env.VITE_USE_MOCK).toLowerCase() === "true";
+const BACKEND_BASE_URL =
+  import.meta.env.VITE_BACKEND_BASE_URL || "http://localhost:8080";
+const AUTH_BASE_URL =
+  import.meta.env.VITE_AUTH_BASE_URL || `${BACKEND_BASE_URL}/v1/auth`;
+
+const USE_MOCK_ALL =
+  String(import.meta.env.VITE_USE_MOCK).toLowerCase() === "true";
 const USE_MOCK_AUTH =
-  USE_MOCK_ALL || String(import.meta.env.VITE_USE_MOCK_AUTH).toLowerCase() === "true";
+  USE_MOCK_ALL ||
+  String(import.meta.env.VITE_USE_MOCK_AUTH).toLowerCase() === "true";
 
 const mockUsers = [
   {
     id: 1,
-    email: "demo@interview.ai",
-    name: "Demo User",
+    loginId: "demo",
+    name: "데모 사용자",
     password: "demo1234",
-    role: "USER",
   },
 ];
 
-async function request(path, options = {}) {
-  const response = await fetch(`${AUTH_BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
+// ─────────────────────────────────────────────────────────
+// Public API
+// ─────────────────────────────────────────────────────────
+
+export async function signup(loginId, password, name) {
+  if (USE_MOCK_AUTH) {
+    return mockSignup(loginId, password, name);
+  }
+  const payload = await fetchWithoutAuth(`${AUTH_BASE_URL}/signup`, {
+    method: "POST",
+    body: JSON.stringify({ loginId, password, name }),
   });
-
-  let payload = null;
-  try {
-    payload = await response.json();
-  } catch {
-    payload = null;
-  }
-
-  if (!response.ok) {
-    const message = payload?.message || "인증 요청 처리에 실패했습니다.";
-    throw new Error(message);
-  }
-
-  return payload;
+  return payload?.data || payload;
 }
 
-export async function login(email, password) {
+export async function login(loginId, password) {
   if (USE_MOCK_AUTH) {
-    return mockLogin(email, password);
+    return mockLogin(loginId, password);
   }
-  const payload = await request("/login", {
+  const payload = await fetchWithoutAuth(`${AUTH_BASE_URL}/login`, {
     method: "POST",
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ loginId, password }),
   });
   const data = payload?.data || payload;
   if (!data?.accessToken) {
     throw new Error("accessToken이 응답에 포함되어야 합니다.");
   }
-  setAuthSession({
-    accessToken: data.accessToken,
-    refreshToken: data.refreshToken,
-    user: data.user,
-  });
-  return data.user || null;
+  setAuthSession({ accessToken: data.accessToken });
+  // 토큰 저장 후 내 정보 조회
+  const user = await fetchMe();
+  return user;
 }
 
 export async function fetchMe() {
@@ -75,38 +69,116 @@ export async function fetchMe() {
   const token = getAccessToken();
   if (!token) throw new Error("로그인이 필요합니다.");
 
-  const payload = await request("/me", {
+  const payload = await fetchWithAuth(`${AUTH_BASE_URL}/me`, {
     method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
   });
   const data = payload?.data || payload;
   if (!data) throw new Error("사용자 정보를 가져올 수 없습니다.");
-  setAuthSession({ accessToken: token, user: data });
+  setAuthSession({ user: data });
   return data;
+}
+
+export async function updateMe({ name, currentPassword, newPassword }) {
+  if (USE_MOCK_AUTH) {
+    return mockUpdateMe({ name, currentPassword, newPassword });
+  }
+  const body = {};
+  if (name !== undefined) body.name = name;
+  if (currentPassword !== undefined) body.currentPassword = currentPassword;
+  if (newPassword !== undefined) body.newPassword = newPassword;
+
+  const payload = await fetchWithAuth(`${AUTH_BASE_URL}/me`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+  const data = payload?.data || payload;
+  if (data) setAuthSession({ user: data });
+  return data;
+}
+
+export async function deleteMe(password) {
+  if (USE_MOCK_AUTH) {
+    return mockDeleteMe(password);
+  }
+  const payload = await fetchWithAuth(`${AUTH_BASE_URL}/me`, {
+    method: "DELETE",
+    body: JSON.stringify({ password }),
+  });
+  clearAuthSession();
+  return payload;
 }
 
 export function logout() {
   clearAuthSession();
 }
 
-async function mockLogin(email, password) {
-  await new Promise((resolve) => setTimeout(resolve, 300));
-  const user = mockUsers.find((entry) => entry.email === email && entry.password === password);
+// ─────────────────────────────────────────────────────────
+// Mock implementations
+// ─────────────────────────────────────────────────────────
+
+async function mockSignup(loginId, password, name) {
+  await new Promise((r) => setTimeout(r, 300));
+  if (mockUsers.some((u) => u.loginId === loginId)) {
+    const err = new Error("이미 사용 중인 아이디입니다.");
+    err.status = 409;
+    err.code = "CONFLICT";
+    throw err;
+  }
+  const newUser = { id: mockUsers.length + 1, loginId, name, password };
+  mockUsers.push(newUser);
+  return { id: newUser.id, loginId: newUser.loginId, name: newUser.name };
+}
+
+async function mockLogin(loginId, password) {
+  await new Promise((r) => setTimeout(r, 300));
+  const user = mockUsers.find(
+    (u) => u.loginId === loginId && u.password === password
+  );
   if (!user) {
-    throw new Error("이메일 또는 비밀번호가 올바르지 않습니다.");
+    throw new Error("아이디 또는 비밀번호가 올바르지 않습니다.");
   }
   const authUser = {
     id: user.id,
-    email: user.email,
+    loginId: user.loginId,
     name: user.name,
-    role: user.role,
+    createdAt: new Date().toISOString(),
   };
-  setAuthSession({
-    accessToken: "mock-access-token",
-    refreshToken: "mock-refresh-token",
-    user: authUser,
-  });
+  setAuthSession({ accessToken: "mock-access-token", user: authUser });
   return authUser;
+}
+
+async function mockUpdateMe({ name, currentPassword, newPassword }) {
+  await new Promise((r) => setTimeout(r, 200));
+  const stored = getStoredUser();
+  if (!stored) throw new Error("로그인이 필요합니다.");
+
+  if (newPassword && !currentPassword) {
+    throw new Error("비밀번호 변경 시 현재 비밀번호가 필요합니다.");
+  }
+  if (currentPassword) {
+    const user = mockUsers.find((u) => u.id === stored.id);
+    if (!user || user.password !== currentPassword) {
+      throw new Error("현재 비밀번호가 일치하지 않습니다.");
+    }
+    if (newPassword) user.password = newPassword;
+  }
+
+  const updated = { ...stored };
+  if (name) updated.name = name;
+  setAuthSession({ user: updated });
+  return updated;
+}
+
+async function mockDeleteMe(password) {
+  await new Promise((r) => setTimeout(r, 200));
+  const stored = getStoredUser();
+  if (!stored) throw new Error("로그인이 필요합니다.");
+
+  const idx = mockUsers.findIndex(
+    (u) => u.id === stored.id && u.password === password
+  );
+  if (idx === -1) throw new Error("비밀번호가 일치하지 않습니다.");
+  mockUsers.splice(idx, 1);
+  clearAuthSession();
+  return { success: true, message: "회원 탈퇴가 완료되었습니다." };
 }

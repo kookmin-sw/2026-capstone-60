@@ -7,17 +7,17 @@ describe("authApi mock jwt flow", () => {
   });
 
   it("logs in and persists user session", async () => {
-    const user = await login("demo@interview.ai", "demo1234");
-    expect(user.email).toBe("demo@interview.ai");
+    const user = await login("demo", "demo1234");
+    expect(user.loginId).toBe("demo");
     expect(localStorage.getItem("accessToken")).toBeTruthy();
 
     const profile = await fetchMe();
-    expect(profile.email).toBe("demo@interview.ai");
+    expect(profile.loginId).toBe("demo");
   });
 
   it("rejects invalid credentials", async () => {
-    await expect(login("wrong@interview.ai", "bad")).rejects.toThrow(
-      "이메일 또는 비밀번호가 올바르지 않습니다."
+    await expect(login("wrong", "bad")).rejects.toThrow(
+      "아이디 또는 비밀번호가 올바르지 않습니다."
     );
   });
 });

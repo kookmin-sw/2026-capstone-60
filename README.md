@@ -1,141 +1,211 @@
-# AI Interview Frontend
+# 🎙️ RAG 기반 AI 모의면접
 
-실시간 AI 면접 프론트엔드 예시 구현입니다.
+> 실시간 음성 면접 · RAG 맞춤 질문 · AI 피드백 리포트를 제공하는 웹 애플리케이션
 
-## 실행
+---
+
+## 프로젝트 소개
+
+취업 준비생이 실전과 동일한 환경에서 AI 면접관과 1:1 음성 면접을 연습할 수 있는 서비스입니다.  
+이력서·자소서를 기반으로 직무에 꼭 맞는 질문을 실시간으로 생성하고, 면접 종료 후 LLM이 답변을 분석해 종합 피드백 리포트를 제공합니다.
+
+---
+
+## 주요 기능
+
+### 🔐 JWT 인증
+이메일/비밀번호 로그인 후 JWT 토큰을 발급받아 모든 API 요청에 자동으로 첨부합니다.  
+앱 재접속 시 저장된 토큰으로 세션을 자동 복원합니다.
+
+### 📝 4단계 위저드 세션 설정
+면접 시작 전 단계별 가이드를 통해 설정을 완료합니다.
+
+| 단계 | 내용 |
+|:----:|------|
+| **1** | 이력서 / 자소서 업로드 및 선택 |
+| **2** | 지원 직무 · 면접 시간 설정 |
+| **3** | 마이크 오디오 레벨 테스트 |
+| **4** | 전체 설정 요약 확인 후 면접 시작 |
+
+### 🎙️ 실시간 음성 면접
+LiveKit WebRTC 기반 음성 연결로 실제 면접과 동일한 환경을 제공합니다.
+
+- **전체 면접 타이머** — 설정된 시간 카운트다운
+- **답변 타이머** — 질문당 최대 90초, 10초 전 경고 알림
+- **마이크 제어** — ON/OFF 토글
+- **실시간 이벤트 로그** — 면접 진행 상황 기록
+
+### 📊 AI 피드백 리포트
+면접 종료 후 LLM이 답변 전체를 분석해 리포트를 자동 생성합니다.
+
+| 지표 | 설명 |
+|------|------|
+| 기술 정확성 | 기술 개념의 올바른 이해 및 설명 수준 |
+| 논리성 | 답변의 구조와 근거 전개 방식 |
+| 깊이 | 주제에 대한 심화 이해도 |
+| 전달력 | 명확하고 간결한 의사전달 능력 |
+
+종합 점수와 함께 질문별 **내 답변 vs 모범 답안** 비교를 제공합니다.
+
+### 📁 누적 면접 기록
+과거 면접 세션의 목록 및 상세 기록(점수, 피드백, 질문/답변)을 조회할 수 있습니다.
+
+### 🥠 포츈쿠키
+면접 전 긴장을 풀어주는 소소한 재미 요소입니다.  
+쿠키를 클릭하면 20가지 응원 메시지 중 하나가 랜덤으로 등장합니다.
+
+---
+
+## 화면 흐름
+
+```
+홈 화면
+  │
+  ├── 로그인
+  │
+  └── 면접 시작
+        │
+        ▼
+  세션 설정 위저드
+  Step 1 · Step 2 · Step 3 · Step 4
+        │
+        ▼
+  실시간 면접 진행
+  (음성 연결 · 타이머 · 질문 표시)
+        │
+        ▼
+  AI 평가 중...
+        │
+        ▼
+  피드백 리포트
+  (점수 · 지표 · 모범 답안)
+        │
+        ▼
+  면접 기록 저장 → 기록 조회
+```
+
+---
+
+## 기술 스택
+
+| 분류 | 기술 |
+|------|------|
+| UI 프레임워크 | React 18 |
+| 라우팅 | React Router DOM v7 |
+| 빌드 도구 | Vite 5 |
+| 실시간 음성 | LiveKit Client (WebRTC) |
+| 스타일 | 커스텀 CSS (CSS Variables 디자인 시스템) |
+| 인증 | JWT (localStorage) |
+| 테스트 | Vitest |
+
+---
+
+## 프로젝트 구조
+
+```
+src/
+├── api/
+│   ├── authApi.js               # 로그인, 내 정보 조회
+│   ├── interviewApi.js          # 세션 생성 / 종료 / 결과 조회
+│   └── interviewHistoryApi.js   # 기록 저장 / 목록 / 상세
+├── auth/
+│   └── tokenStorage.js          # JWT 토큰 관리
+├── components/
+│   ├── HomeView.jsx              # 홈 (히어로 · 피처 카드 · 포츈쿠키)
+│   ├── LoginForm.jsx             # 로그인
+│   ├── SessionSetupForm.jsx      # 4단계 위저드 세션 설정
+│   ├── InterviewRoom.jsx         # 실시간 면접
+│   ├── EvaluatingView.jsx        # AI 평가 대기
+│   ├── ResultView.jsx            # 피드백 리포트
+│   ├── HistoryListView.jsx       # 면접 기록 목록
+│   ├── HistoryDetailView.jsx     # 면접 기록 상세
+│   └── FortuneCookie.jsx         # 포츈쿠키
+├── hooks/
+│   └── useCountdown.js           # 카운트다운 타이머 훅
+├── App.jsx                       # 라우팅 · 전역 상태
+└── styles.css                    # 전역 디자인 시스템
+```
+
+---
+
+## 백엔드 연동 구조
+
+```
+[프론트엔드]                    [백엔드 서버]
+     │                               │
+     ├── POST /v1/auth/login ────────▶ JWT 발급
+     ├── GET  /v1/auth/me ───────────▶ 세션 확인
+     │                               │
+     ├── POST /v1/interviews/sessions ▶ 면접 세션 생성
+     │                                  └─▶ LiveKit 토큰 반환
+     │                               │
+     ├── POST /sessions/{id}/end ────▶ 면접 종료 → AI 평가 시작
+     │                               │
+     ├── GET  /sessions/{id}/result ─▶ 결과 폴링 (4초 간격)
+     │          EVALUATING → 대기        └─▶ 완료 시 리포트 반환
+     │                               │
+     └── POST /v1/interviews/results ▶ 결과 기록 저장
+         GET  /v1/interviews/results ─▶ 내 기록 목록
+         GET  /v1/interviews/results/{id} ▶ 기록 상세
+```
+
+### 면접 세션 생성 요청
+
+```json
+POST /v1/interviews/sessions
+{
+  "resumeIds": 1,
+  "coverLetter": 3,
+  "jobField": "BACKEND",
+  "durationMinutes": 15
+}
+```
+
+지원 직무: `BACKEND` · `FRONTEND` · `ANDROID` · `IOS` · `DEVOPS` · `DATA` · `AI`
+
+### 피드백 리포트 응답
+
+```json
+{
+  "score": 85,
+  "overallFeedback": "기술 이해도가 높고 논리적인 답변을 구성했습니다...",
+  "qaList": [
+    {
+      "turn": 1,
+      "question": "최근 프로젝트에서 어려웠던 기술 의사결정을 설명해주세요.",
+      "userAnswer": "저는 ...",
+      "bestAnswer": "이상적인 답변은 ..."
+    }
+  ]
+}
+```
+
+---
+
+## 시작하기
 
 ```bash
+# 의존성 설치
 npm install
+
+# 환경 변수 설정
+cp .env.example .env
+# .env 파일에서 백엔드 서버 주소 입력
+
+# 개발 서버 실행
 npm run dev
 ```
 
-## 환경 변수
-
-`.env` 파일을 만들고 아래 값을 설정하세요.
+### 환경 변수
 
 ```bash
-VITE_BACKEND_BASE_URL=http://172.20.10.2:8080
-VITE_API_BASE_URL=http://172.20.10.2:8080/v1/interviews
-VITE_AUTH_BASE_URL=http://172.20.10.2:8080/v1/auth
-VITE_AUTH_TOKEN=
-VITE_USE_MOCK=false
-VITE_USE_MOCK_AUTH=false
-VITE_USE_MOCK_INTERVIEW_SESSION=false
-VITE_USE_MOCK_INTERVIEW_RESULT=false
-VITE_USE_MOCK_INTERVIEW_HISTORY=false
+VITE_BACKEND_BASE_URL=http://localhost:8080
+VITE_API_BASE_URL=http://localhost:8080/v1/interviews
+VITE_AUTH_BASE_URL=http://localhost:8080/v1/auth
 ```
 
-평가 진행 중 상태는 `GET /sessions/{sessionId}/result`에서 `200 + data.status=EVALUATING` 응답을 사용합니다.
+---
 
-### 하이브리드 모드 예시 (현재 백엔드가 시작/종료만 구현된 경우)
+## 백엔드 연동 문서
 
-```bash
-VITE_USE_MOCK=false
-VITE_USE_MOCK_AUTH=true
-VITE_USE_MOCK_INTERVIEW_SESSION=false
-VITE_USE_MOCK_INTERVIEW_RESULT=true
-VITE_USE_MOCK_INTERVIEW_HISTORY=true
-```
-
-- 실백엔드: `POST /sessions`, `POST /sessions/{sessionId}/end`
-- mock: 로그인/내정보, 결과조회, 누적기록
-
-## JWT 로그인 동작
-
-1. 로그인 화면에서 `POST /v1/auth/login` 호출
-2. 응답의 `accessToken`, `refreshToken`, `user`를 `localStorage`에 저장
-3. 앱 재접속/새로고침 시 `GET /v1/auth/me`로 세션 유효성 확인
-4. 이후 인터뷰 API 호출에 `Authorization: Bearer <accessToken>` 자동 첨부
-5. 로그아웃 시 저장된 인증 정보 삭제
-
-저장 키:
-
-- `accessToken`
-- `refreshToken`
-- `authUser`
-
-## 문서 업로드 및 면접 시작 사전절차
-
-- 준비 화면에서 이력서/자소서 파일을 업로드할 수 있습니다. (브라우저 로컬 저장)
-- 면접 시작 시 문서 ID가 아닌 업로드한 **문서 이름**으로 이력서/자소서를 선택합니다.
-- 이력서/자소서 선택은 필수가 아니며, 둘 다 선택하지 않아도 면접을 시작할 수 있습니다.
-- `마이크 테스트 시작`으로 실제 오디오 권한/입력 감지를 확인한 뒤 `테스트 종료`를 눌러 통과 상태를 반영합니다.
-- 마이크 테스트 통과 체크 + 90초 규칙 체크가 완료되어야 시작 버튼이 활성화됩니다.
-
-## 누적 면접 기록 메뉴
-
-- 상단 메뉴의 `면접 기록`에서 로그인 사용자 기준 누적 기록 목록을 조회합니다.
-- 목록에서 `상세 보기`를 누르면 질문/답변/모범답안까지 포함한 상세를 볼 수 있습니다.
-- 평가 완료 시 프론트는 결과를 `POST /v1/interviews/results`로 저장 요청합니다.
-- 백엔드는 반드시 **로그인 사용자 본인 기록만** 목록/상세에 노출해야 합니다.
-
-## "면접 시작" 클릭 시 동작 순서
-
-1. `SessionSetupForm`에서 `resumeIds`, `coverLetter`, `jobField`, `durationMinutes`를 수집합니다.
-2. `App.startSession()`이 실행되어 로딩 상태(`loading=true`)로 전환합니다.
-3. `createInterviewSession()` 호출:
-   - 실서버 모드: `POST /sessions`
-   - mock 모드: 내부 mock 세션 생성
-4. 응답에서 `sessionId`와 `livekit` 정보를 저장합니다.
-5. 화면 상태가 `READY -> INTERVIEW`로 바뀝니다.
-6. `InterviewRoom` 진입 후:
-   - 실서버 모드: LiveKit `room.connect()` 실행 후 마이크 활성화
-   - mock 모드: 즉시 연결된 상태로 표시
-7. 면접 타이머(전체 시간)와 답변 타이머(90초)가 시작됩니다.
-
-## 프론트 단독 테스트(mock 모드)
-
-백엔드/Spring Boot 없이 UI 흐름 전체를 검증하려면:
-
-```bash
-# .env
-VITE_USE_MOCK=true
-```
-
-mock 로그인 계정:
-
-- email: `demo@interview.ai`
-- password: `demo1234`
-
-그 뒤 실행:
-
-```bash
-npm run dev
-```
-
-앱 상단에 `Mock Mode: 백엔드 없이 단독 테스트 중` 배지가 보이면 정상입니다.
-
-## 테스트 케이스
-
-### 수동 테스트 케이스
-
-- TC-01 세션 생성: 시작 버튼 클릭 시 면접 화면으로 전환되고 세션/룸 정보가 표시된다.
-- TC-01-REQ: 시작 시 요청 바디가 `{ resumeIds: number, coverLetter: number, jobField, durationMinutes }` 형식이다.
-- TC-02 마이크 토글: "마이크 끄기/켜기" 버튼 클릭 시 버튼 텍스트가 상태에 맞게 바뀐다.
-- TC-03 종료 플로우: "면접 종료" 클릭 시 평가중 화면으로 전환된다.
-- TC-04 결과 폴링: 잠시 후 결과 화면으로 전환되고 점수/문답 목록이 표시된다.
-- TC-05 재시작: "새 면접 시작" 클릭 시 초기 입력 화면으로 복귀한다.
-
-### 자동 테스트 케이스(vitest)
-
-```bash
-npm run test
-```
-
-포함된 자동 테스트:
-
-- JWT 로그인 성공/실패 및 사용자 조회(mock) 확인
-- mock 모드 활성화 여부 확인
-- 세션 생성 -> 종료 -> 결과 폴링(pending -> success) 확인
-
-## 구현 범위
-
-- `POST /sessions`로 면접 세션 생성
-- LiveKit 접속 및 마이크 on/off 제어
-- 전체 면접 시간 카운트다운 + 90초 답변 타이머
-- `POST /sessions/{sessionId}/end`로 수동/자동 종료
-- `GET /sessions/{sessionId}/result` 폴링으로 결과 조회
-
-## 백엔드 연동 통합 문서
-
-- `docs/backend-integration-spec.md`
+API 명세 전문은 [`docs/backend-integration-spec.md`](./docs/backend-integration-spec.md)를 참고하세요.

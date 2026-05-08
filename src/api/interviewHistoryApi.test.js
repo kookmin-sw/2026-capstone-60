@@ -10,7 +10,7 @@ describe("interview history api mock flow", () => {
   beforeEach(async () => {
     logout();
     localStorage.removeItem("interviewHistoryRecords");
-    await login("demo@interview.ai", "demo1234");
+    await login("demo", "demo1234");
   });
 
   it("saves and fetches my interview history", async () => {

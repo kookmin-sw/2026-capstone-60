@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
-import { fetchMe, login, logout } from "./api/authApi";
+import { deleteMe, fetchMe, login, logout, signup, updateMe } from "./api/authApi";
+import ApiTestPage from "./components/ApiTestPage";
 import {
   fetchInterviewRecordDetail,
   fetchInterviewRecords,
@@ -12,8 +13,10 @@ import HistoryDetailView from "./components/HistoryDetailView";
 import HistoryListView from "./components/HistoryListView";
 import InterviewRoom from "./components/InterviewRoom";
 import LoginForm from "./components/LoginForm";
+import MyPage from "./components/MyPage";
 import ResultView from "./components/ResultView";
 import SessionSetupForm from "./components/SessionSetupForm";
+import SignupForm from "./components/SignupForm";
 import {
   createInterviewSession,
   endInterviewSession,
@@ -24,6 +27,9 @@ import {
 const ROUTE = {
   HOME: "/",
   LOGIN: "/login",
+  SIGNUP: "/signup",
+  MYPAGE: "/mypage",
+  API_TEST: "/api-test",
   SETUP: "/interview/setup",
   ROOM: "/interview/room",
   EVALUATING: "/interview/evaluating",
@@ -47,23 +53,42 @@ export default function App() {
   const [historyDetailLoading, setHistoryDetailLoading] = useState(false);
   const [historyDetail, setHistoryDetail] = useState(null);
   const [bootstrapping, setBootstrapping] = useState(true);
+  const [updating, setUpdating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  // 401 응답 시 자동 로그아웃 및 로그인 페이지 이동
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      setUser(null);
+      setError("");
+      setSession(null);
+      setResult(null);
+      setHistoryRecords([]);
+      setHistoryDetail(null);
+      navigate(ROUTE.LOGIN, { replace: true });
+    };
+    window.addEventListener("auth:unauthorized", handleUnauthorized);
+    return () => window.removeEventListener("auth:unauthorized", handleUnauthorized);
+  }, [navigate]);
 
   useEffect(() => {
     async function bootstrapAuth() {
       try {
         const profile = await fetchMe();
         setUser(profile);
-        if (location.pathname === ROUTE.LOGIN) {
+        if (location.pathname === ROUTE.LOGIN || location.pathname === ROUTE.SIGNUP) {
           navigate(ROUTE.HOME, { replace: true });
         }
       } catch {
-        if (
-          location.pathname.startsWith(ROUTE.SETUP) ||
-          location.pathname.startsWith(ROUTE.ROOM) ||
-          location.pathname.startsWith(ROUTE.EVALUATING) ||
-          location.pathname.startsWith(ROUTE.RESULT) ||
-          location.pathname.startsWith(ROUTE.HISTORY)
-        ) {
+        const protectedPaths = [
+          ROUTE.SETUP,
+          ROUTE.ROOM,
+          ROUTE.EVALUATING,
+          ROUTE.RESULT,
+          ROUTE.HISTORY,
+          ROUTE.MYPAGE,
+        ];
+        if (protectedPaths.some((p) => location.pathname.startsWith(p))) {
           navigate(ROUTE.LOGIN, { replace: true });
         }
       } finally {
@@ -73,6 +98,19 @@ export default function App() {
     bootstrapAuth();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const signUp = async (loginId, password, name) => {
+    try {
+      setAuthLoading(true);
+      setError("");
+      await signup(loginId, password, name);
+      navigate(ROUTE.LOGIN);
+    } catch (signupError) {
+      setError(signupError.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
 
   const startSession = async (payload) => {
     try {
@@ -94,11 +132,11 @@ export default function App() {
     }
   };
 
-  const signIn = async (email, password) => {
+  const signIn = async (loginId, password) => {
     try {
       setAuthLoading(true);
       setError("");
-      const authUser = await login(email, password);
+      const authUser = await login(loginId, password);
       setUser(authUser);
       navigate(ROUTE.HOME);
     } catch (loginError) {
@@ -117,6 +155,31 @@ export default function App() {
     setHistoryRecords([]);
     setHistoryDetail(null);
     navigate(ROUTE.HOME);
+  };
+
+  const handleUpdateMe = async (fields) => {
+    setUpdating(true);
+    try {
+      const updated = await updateMe(fields);
+      setUser((prev) => ({ ...prev, ...updated }));
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleDeleteMe = async (password) => {
+    setDeleting(true);
+    try {
+      await deleteMe(password);
+      setUser(null);
+      setSession(null);
+      setResult(null);
+      setHistoryRecords([]);
+      setHistoryDetail(null);
+      navigate(ROUTE.LOGIN);
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const endSession = useCallback(
@@ -272,7 +335,37 @@ export default function App() {
         <Route
           path={ROUTE.LOGIN}
           element={
-            user ? <Navigate to={ROUTE.HOME} replace /> : <LoginForm onLogin={signIn} loading={authLoading} />
+            user ? (
+              <Navigate to={ROUTE.HOME} replace />
+            ) : (
+              <LoginForm onLogin={signIn} loading={authLoading} />
+            )
+          }
+        />
+        <Route
+          path={ROUTE.SIGNUP}
+          element={
+            user ? (
+              <Navigate to={ROUTE.HOME} replace />
+            ) : (
+              <SignupForm onSignup={signUp} loading={authLoading} />
+            )
+          }
+        />
+        <Route
+          path={ROUTE.MYPAGE}
+          element={
+            user ? (
+              <MyPage
+                user={user}
+                onUpdate={handleUpdateMe}
+                onDelete={handleDeleteMe}
+                updating={updating}
+                deleting={deleting}
+              />
+            ) : (
+              <Navigate to={ROUTE.LOGIN} replace />
+            )
           }
         />
         <Route
@@ -333,64 +426,102 @@ export default function App() {
           path={`${ROUTE.HISTORY}/:recordId`}
           element={user ? <HistoryDetailRoute /> : <Navigate to={ROUTE.LOGIN} replace />}
         />
+        <Route path={ROUTE.API_TEST} element={<ApiTestPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     );
   };
 
-  const showAuthActions = location.pathname !== ROUTE.LOGIN && Boolean(user);
+  const isAuthPage =
+    location.pathname === ROUTE.LOGIN || location.pathname === ROUTE.SIGNUP;
+  const showNavActions = !isAuthPage && Boolean(user);
 
   return (
-    <main className="app-shell">
-      <div className="background-blur" />
+    <>
       <header className="app-header">
-        <div>
-          <p className="eyebrow">Realtime Voice Interview</p>
-          <strong>RAG 기반 AI 모의면접</strong>
-        </div>
-        <div className="header-actions">
-          {showAuthActions && (
-            <>
+        <div className="nav-inner">
+          <button className="nav-logo" type="button" onClick={() => navigate(ROUTE.HOME)}>
+            AI<span>면접</span>
+          </button>
+          <div className="header-actions">
+            {showNavActions && (
+              <>
+                <button
+                  className={`nav-link ${location.pathname === ROUTE.HOME ? "is-active" : ""}`}
+                  type="button"
+                  onClick={() => navigate(ROUTE.HOME)}
+                >
+                  홈
+                </button>
+                <button
+                  className={`nav-link ${
+                    location.pathname.startsWith(ROUTE.SETUP) ||
+                    location.pathname.startsWith(ROUTE.ROOM)
+                      ? "is-active"
+                      : ""
+                  }`}
+                  type="button"
+                  onClick={reset}
+                >
+                  면접 시작
+                </button>
+                <button
+                  className={`nav-link ${
+                    location.pathname.startsWith(ROUTE.HISTORY) ? "is-active" : ""
+                  }`}
+                  type="button"
+                  onClick={openHistory}
+                >
+                  면접 기록
+                </button>
+                <div className="nav-divider" />
+              </>
+            )}
+            {user && (
               <button
-                className={`ghost-btn ${location.pathname === ROUTE.HOME ? "is-active" : ""}`}
-                type="button"
-                onClick={() => navigate(ROUTE.HOME)}
-              >
-                홈
-              </button>
-              <button
-                className={`ghost-btn ${
-                  location.pathname.startsWith(ROUTE.SETUP) || location.pathname.startsWith(ROUTE.ROOM)
-                    ? "is-active"
-                    : ""
+                className={`chip success chip-btn ${
+                  location.pathname === ROUTE.MYPAGE ? "is-active" : ""
                 }`}
                 type="button"
-                onClick={reset}
+                onClick={() => navigate(ROUTE.MYPAGE)}
+                title="마이페이지"
               >
-                면접 시작
+                {user.name || user.loginId} 님
               </button>
+            )}
+            {showNavActions && (
+              <button className="ghost-btn" type="button" onClick={signOut}>
+                로그아웃
+              </button>
+            )}
+            {!user && !isAuthPage && (
               <button
-                className={`ghost-btn ${location.pathname.startsWith(ROUTE.HISTORY) ? "is-active" : ""}`}
+                className="primary-btn"
                 type="button"
-                onClick={openHistory}
+                onClick={() => navigate(ROUTE.LOGIN)}
               >
-                면접 기록
+                로그인
               </button>
-            </>
-          )}
-          {user && <span className="chip success">{user.name || user.email} 님</span>}
-          {showAuthActions && (
-            <button className="ghost-btn" type="button" onClick={signOut}>
-              로그아웃
+            )}
+            <button
+              className={`nav-link ${location.pathname === ROUTE.API_TEST ? "is-active" : ""}`}
+              type="button"
+              onClick={() => navigate(ROUTE.API_TEST)}
+              title="API 테스트 페이지"
+              style={{ fontSize: 12, color: "var(--slate-400)" }}
+            >
+              API Test
             </button>
-          )}
+          </div>
         </div>
       </header>
-      {isMockMode() && (
-        <div className="mock-badge">Mock Mode: 백엔드 없이 단독 테스트 중</div>
-      )}
-      {error && <div className="global-error">{error}</div>}
-      <section className="page-content">{renderContent()}</section>
-    </main>
+      <main className="app-shell">
+        {isMockMode() && (
+          <div className="mock-badge">Mock Mode — 백엔드 없이 단독 테스트 중</div>
+        )}
+        {error && <div className="global-error">{error}</div>}
+        <section className="page-content">{renderContent()}</section>
+      </main>
+    </>
   );
 }

@@ -1,61 +1,24 @@
-const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_BASE_URL || "http://172.20.10.2:8080";
+import { fetchWithAuth } from "./apiClient";
+
+const BACKEND_BASE_URL =
+  import.meta.env.VITE_BACKEND_BASE_URL || "http://localhost:8080";
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || `${BACKEND_BASE_URL}/v1/interviews`;
 const USE_MOCK_ALL = String(import.meta.env.VITE_USE_MOCK).toLowerCase() === "true";
 const USE_MOCK_SESSION =
-  USE_MOCK_ALL || String(import.meta.env.VITE_USE_MOCK_INTERVIEW_SESSION).toLowerCase() === "true";
+  USE_MOCK_ALL ||
+  String(import.meta.env.VITE_USE_MOCK_INTERVIEW_SESSION).toLowerCase() === "true";
 const USE_MOCK_RESULT =
-  USE_MOCK_ALL || String(import.meta.env.VITE_USE_MOCK_INTERVIEW_RESULT).toLowerCase() === "true";
+  USE_MOCK_ALL ||
+  String(import.meta.env.VITE_USE_MOCK_INTERVIEW_RESULT).toLowerCase() === "true";
 
 const mockStore = {
   sessions: new Map(),
   results: new Map(),
 };
 
-function buildHeaders() {
-  const headers = {
-    "Content-Type": "application/json",
-  };
-  const token =
-    localStorage.getItem("accessToken") ||
-    localStorage.getItem("authToken") ||
-    import.meta.env.VITE_AUTH_TOKEN;
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-  return headers;
-}
-
-async function request(path, options = {}) {
-  const { allowStatuses = [], ...fetchOptions } = options;
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...fetchOptions,
-    headers: {
-      ...buildHeaders(),
-      ...(fetchOptions.headers || {}),
-    },
-  });
-
-  let payload = null;
-  try {
-    payload = await response.json();
-  } catch {
-    payload = null;
-  }
-
-  const statusAllowed = allowStatuses.includes(response.status);
-  if (!response.ok && !statusAllowed) {
-    const message = payload?.message || "요청 처리 중 오류가 발생했습니다.";
-    const error = new Error(message);
-    error.code = payload?.code;
-    error.status = response.status;
-    throw error;
-  }
-
-  if (payload && typeof payload === "object") {
-    payload.__httpStatus = response.status;
-  }
-  return payload;
+function request(path, options = {}) {
+  return fetchWithAuth(`${API_BASE_URL}${path}`, options);
 }
 
 export function createInterviewSession(data) {

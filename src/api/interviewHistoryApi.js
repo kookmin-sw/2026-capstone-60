@@ -1,49 +1,18 @@
 import { getStoredUser } from "../auth/tokenStorage";
+import { fetchWithAuth } from "./apiClient";
 
-const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_BASE_URL || "http://172.20.10.2:8080";
+const BACKEND_BASE_URL =
+  import.meta.env.VITE_BACKEND_BASE_URL || "http://localhost:8080";
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || `${BACKEND_BASE_URL}/v1/interviews`;
 const USE_MOCK_ALL = String(import.meta.env.VITE_USE_MOCK).toLowerCase() === "true";
 const USE_MOCK_HISTORY =
-  USE_MOCK_ALL || String(import.meta.env.VITE_USE_MOCK_INTERVIEW_HISTORY).toLowerCase() === "true";
+  USE_MOCK_ALL ||
+  String(import.meta.env.VITE_USE_MOCK_INTERVIEW_HISTORY).toLowerCase() === "true";
 const HISTORY_KEY = "interviewHistoryRecords";
 
-function buildHeaders() {
-  const headers = {
-    "Content-Type": "application/json",
-  };
-  const token =
-    localStorage.getItem("accessToken") ||
-    localStorage.getItem("authToken") ||
-    import.meta.env.VITE_AUTH_TOKEN;
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-  return headers;
-}
-
-async function request(path, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      ...buildHeaders(),
-      ...(options.headers || {}),
-    },
-  });
-
-  let payload = null;
-  try {
-    payload = await response.json();
-  } catch {
-    payload = null;
-  }
-
-  if (!response.ok) {
-    const message = payload?.message || "면접 기록 요청 처리에 실패했습니다.";
-    throw new Error(message);
-  }
-
-  return payload;
+function request(path, options = {}) {
+  return fetchWithAuth(`${API_BASE_URL}${path}`, options);
 }
 
 export async function saveInterviewRecord(recordInput) {
