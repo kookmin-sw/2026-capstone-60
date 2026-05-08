@@ -88,12 +88,56 @@ graph TB
 
 | Method | Path | 설명 | 요청 | 응답 | 상태 |
 |--------|------|------|------|------|------|
+| POST | `/v1/auth/signup` | 회원가입 | `SignupRequest` | 201 + `SignupResponse` | 확정 |
+| POST | `/v1/auth/login` | 로그인 (JWT 발급) | `LoginRequest` | 200 + `LoginResponse` | 확정 |
 | POST | `/v1/interviews/sessions` | 면접 세션 생성 + LiveKit 방 생성 | `SessionCreateRequest` | 200 + `SessionCreateResponse` | 확정 |
 | POST | `/v1/interviews/sessions/{sessionId}/end` | 면접 세션 종료 | `SessionEndRequest` | 200 + `SessionEndResponse` | 확정 |
 <!-- TODO: 이력서/자소서 관련 API (1번 담당) -->
 <!-- TODO: 피드백 조회 API (4번 담당) -->
-<!-- TODO: 회원 관련 API (1번 담당) -->
 <!-- TODO: 마이페이지/게시판 API (4번 담당) -->
+
+#### 인증 API 상세
+
+**공통 에러 코드**
+- `400` VALIDATION_ERROR: 필수값 누락
+- `401` UNAUTHORIZED: 로그인 실패 (아이디/비밀번호 불일치)
+- `409` CONFLICT: 회원가입 시 아이디 중복
+
+**POST /v1/auth/signup — 회원가입**
+```json
+// Request
+{ "loginId": "user123", "password": "pw1234", "name": "홍길동" }
+
+// Response 201
+{
+  "success": true,
+  "data": { "id": 1, "loginId": "user123", "name": "홍길동" }
+}
+```
+
+**POST /v1/auth/login — 로그인**
+```json
+// Request
+{ "loginId": "user123", "password": "pw1234" }
+
+// Response 200
+{
+  "success": true,
+  "data": {
+    "accessToken": "eyJhbGciOiJIUzI1NiJ9...",
+    "tokenType": "Bearer",
+    "expiresIn": 3600
+  }
+}
+```
+
+**인증이 필요한 API 호출 방법**
+
+로그인 응답의 `accessToken`을 이후 모든 API 요청 헤더에 담아 보냅니다.
+```
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9...
+```
+> 현재(이슈 #18 시점)는 모든 경로가 permitAll 상태이며, JWT 필터 적용은 후속 이슈에서 진행합니다.
 
 ### 주요 컴포넌트
 

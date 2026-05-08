@@ -18,12 +18,21 @@
 git clone https://github.com/capstone-ai-mock-interview/backend.git
 cd backend
 
-# 2. DB 실행
+# 2. 환경변수 설정
+cp .env.example .env
+# .env 파일을 열어 실제 값을 채워주세요 (JWT_SECRET, LIVEKIT_* 등).
+
+# 3. DB 실행
 docker compose up -d
 
-# 3. 앱 실행
+# 4. 앱 실행
 ./gradlew bootRun
 ```
+
+### 환경변수
+- `.env` 파일은 Git에 커밋되지 않습니다. 각자 로컬에서 관리하세요.
+- 필요한 키 목록과 설명은 `.env.example`을 참고하세요.
+- Spring Boot와 Docker Compose 모두 `.env`를 자동으로 읽습니다.
 
 ### DB 관리
 ```bash

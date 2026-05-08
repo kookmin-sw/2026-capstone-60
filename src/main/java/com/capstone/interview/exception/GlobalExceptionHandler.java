@@ -26,6 +26,26 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(400).body(error);
     }
 
+    /** 인증 실패 (401) — 로그인 실패, 토큰 검증 실패 등 */
+    @ExceptionHandler(UnauthorizedException.class)
+    public ResponseEntity<ErrorResponse> handleUnauthorized(UnauthorizedException e) {
+        log.warn("[인증 실패] {}", e.getMessage());
+        ErrorResponse error = new ErrorResponse(
+            401, "UNAUTHORIZED", e.getMessage(), LocalDateTime.now()
+        );
+        return ResponseEntity.status(401).body(error);
+    }
+
+    /** 리소스 충돌 (409) — 중복된 아이디 등 */
+    @ExceptionHandler(ConflictException.class)
+    public ResponseEntity<ErrorResponse> handleConflict(ConflictException e) {
+        log.warn("[리소스 충돌] {}", e.getMessage());
+        ErrorResponse error = new ErrorResponse(
+            409, "CONFLICT", e.getMessage(), LocalDateTime.now()
+        );
+        return ResponseEntity.status(409).body(error);
+    }
+
     /** 예상하지 못한 서버 오류 (500) — catch-all */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleAll(Exception e) {
