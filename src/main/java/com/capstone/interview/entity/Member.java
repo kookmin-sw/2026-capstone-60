@@ -40,6 +40,14 @@ public class Member {
         this.name = name;
     }
 
+    public void updateName(String name) {
+        this.name = name;
+    }
+
+    public void updatePassword(String encodedPassword) {
+        this.password = encodedPassword;
+    }
+
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();

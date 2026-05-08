@@ -5,10 +5,15 @@ import com.capstone.interview.dto.SessionCreateResponse;
 import com.capstone.interview.dto.SessionEndResponse;
 import com.capstone.interview.entity.CoverLetter;
 import com.capstone.interview.entity.Interview;
+import com.capstone.interview.entity.Member;
 import com.capstone.interview.entity.Resume;
+import com.capstone.interview.exception.UnauthorizedException;
+import com.capstone.interview.repository.CoverLetterRepository;
 import com.capstone.interview.repository.InterviewRepository;
-import jakarta.persistence.EntityManager;
+import com.capstone.interview.repository.MemberRepository;
+import com.capstone.interview.repository.ResumeRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,8 +24,10 @@ import java.util.UUID;
 public class InterviewService {
 
     private final InterviewRepository interviewRepository;
+    private final MemberRepository memberRepository;
+    private final ResumeRepository resumeRepository;
+    private final CoverLetterRepository coverLetterRepository;
     private final LiveKitService liveKitService;
-    private final EntityManager entityManager;
 
     @Transactional
     public SessionCreateResponse createSession(SessionCreateRequest request) {
@@ -28,15 +35,26 @@ public class InterviewService {
             throw new IllegalArgumentException("jobField와 durationMinutes는 필수입니다.");
         }
 
-        Resume resume = request.resumeIds() != null
-                ? entityManager.getReference(Resume.class, request.resumeIds()) : null;
-        CoverLetter coverLetter = request.coverLetter() != null
-                ? entityManager.getReference(CoverLetter.class, request.coverLetter()) : null;
+        Resume resume = null;
+        if (request.resumeIds() != null) {
+            resume = resumeRepository.findById(request.resumeIds())
+                    .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 이력서입니다: " + request.resumeIds()));
+        }
+
+        CoverLetter coverLetter = null;
+        if (request.coverLetter() != null) {
+            coverLetter = coverLetterRepository.findById(request.coverLetter())
+                    .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 자기소개서입니다: " + request.coverLetter()));
+        }
+
+        String loginId = SecurityContextHolder.getContext().getAuthentication().getName();
+        Member member = memberRepository.findByLoginId(loginId)
+                .orElseThrow(() -> new UnauthorizedException("인증된 사용자를 찾을 수 없습니다."));
 
         String sessionId = "sess-" + UUID.randomUUID();
 
         Interview interview = Interview.builder()
-                .member(null) // TODO: 인증 구현 시 SecurityContext에서 member 추출로 교체
+                .member(member)
                 .resume(resume)
                 .coverLetter(coverLetter)
                 .category(request.jobField())
