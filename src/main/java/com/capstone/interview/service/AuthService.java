@@ -3,6 +3,11 @@ package com.capstone.interview.service;
 import com.capstone.interview.config.JwtProvider;
 import com.capstone.interview.dto.LoginRequest;
 import com.capstone.interview.dto.LoginResponse;
+import com.capstone.interview.dto.MemberDeleteRequest;
+import com.capstone.interview.dto.MemberDeleteResponse;
+import com.capstone.interview.dto.MemberInfoResponse;
+import com.capstone.interview.dto.MemberUpdateRequest;
+import com.capstone.interview.dto.MemberUpdateResponse;
 import com.capstone.interview.dto.SignupRequest;
 import com.capstone.interview.dto.SignupResponse;
 import com.capstone.interview.entity.Member;
@@ -73,6 +78,72 @@ public class AuthService {
                 true,
                 new LoginResponse.Data(accessToken, "Bearer", expirationMs / 1000)
         );
+    }
+
+    /**
+     * 내 정보 조회.
+     */
+    @Transactional(readOnly = true)
+    public MemberInfoResponse getMyInfo(String loginId) {
+        Member member = findMemberByLoginId(loginId);
+        return new MemberInfoResponse(
+                true,
+                new MemberInfoResponse.Data(member.getId(), member.getLoginId(), member.getName(), member.getCreatedAt())
+        );
+    }
+
+    /**
+     * 회원 정보 수정.
+     * name 변경 및 비밀번호 변경(선택) 지원.
+     * 비밀번호 변경 시 currentPassword 검증 필요.
+     */
+    @Transactional
+    public MemberUpdateResponse updateMember(String loginId, MemberUpdateRequest request) {
+        Member member = findMemberByLoginId(loginId);
+
+        if (!isBlank(request.name())) {
+            member.updateName(request.name());
+        }
+
+        if (!isBlank(request.newPassword())) {
+            if (isBlank(request.currentPassword())) {
+                throw new IllegalArgumentException("비밀번호를 변경하려면 currentPassword가 필요합니다.");
+            }
+            if (!passwordEncoder.matches(request.currentPassword(), member.getPassword())) {
+                throw new UnauthorizedException("현재 비밀번호가 올바르지 않습니다.");
+            }
+            member.updatePassword(passwordEncoder.encode(request.newPassword()));
+        }
+
+        return new MemberUpdateResponse(
+                true,
+                new MemberUpdateResponse.Data(member.getId(), member.getLoginId(), member.getName())
+        );
+    }
+
+    /**
+     * 회원 탈퇴.
+     * 비밀번호 확인 후 계정 삭제.
+     */
+    @Transactional
+    public MemberDeleteResponse deleteMember(String loginId, MemberDeleteRequest request) {
+        if (isBlank(request.password())) {
+            throw new IllegalArgumentException("password는 필수입니다.");
+        }
+
+        Member member = findMemberByLoginId(loginId);
+
+        if (!passwordEncoder.matches(request.password(), member.getPassword())) {
+            throw new UnauthorizedException("비밀번호가 올바르지 않습니다.");
+        }
+
+        memberRepository.delete(member);
+        return new MemberDeleteResponse(true, "회원 탈퇴가 완료되었습니다.");
+    }
+
+    private Member findMemberByLoginId(String loginId) {
+        return memberRepository.findByLoginId(loginId)
+                .orElseThrow(() -> new UnauthorizedException("사용자를 찾을 수 없습니다."));
     }
 
     private void validateSignupRequest(SignupRequest request) {
