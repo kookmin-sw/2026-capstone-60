@@ -25,10 +25,10 @@ public class FeedbackController {
 
     /**
      * 면접 결과 피드백 상세 조회
-     * GET /v1/interviews/{sessionId}/feedback
+     * GET /v1/interviews/feedback/{sessionId}
      * * @return 개별평가, 개별모범답안, 전체 피드백이 모두 담긴 FeedbackResponse
      */
-    @GetMapping("/{sessionId}/feedback")
+    @GetMapping("/feedback/{sessionId}")
     public ResponseEntity<FeedbackResponse> getFeedback(@PathVariable String sessionId) {
         log.info("[피드백 조회 시작] sessionId: {}", sessionId);
 
