@@ -28,6 +28,7 @@ public class InterviewService {
     private final ResumeRepository resumeRepository;
     private final CoverLetterRepository coverLetterRepository;
     private final LiveKitService liveKitService;
+    private final EvaluationService evaluationService;
 
     @Transactional
     public SessionCreateResponse createSession(SessionCreateRequest request) {
@@ -82,6 +83,10 @@ public class InterviewService {
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 세션입니다: " + sessionId));
 
         interview.complete();
+        interviewRepository.save(interview);
+
+        // EvaluationService 비동기 호출
+        evaluationService.evaluate(sessionId);
 
         return new SessionEndResponse(
                 true,
