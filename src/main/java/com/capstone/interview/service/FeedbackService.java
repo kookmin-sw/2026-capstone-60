@@ -94,7 +94,6 @@ public class FeedbackService {
                 .map(interview -> FeedbackListDto.builder()
                         .sessionId(interview.getSessionId())
                         .category(interview.getCategory())
-                        .status(interview.getStatus().name())
                         .overallScore(extractOverallScore(interview.getTotalFeedback()))
                         .createdAt(interview.getCreatedAt())
                         .build())
