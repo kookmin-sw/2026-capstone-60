@@ -36,6 +36,26 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(401).body(error);
     }
 
+    /** 세션 없음 (404) */
+    @ExceptionHandler(SessionNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleSessionNotFound(SessionNotFoundException e) {
+        log.warn("[세션 없음] {}", e.getMessage());
+        ErrorResponse error = new ErrorResponse(
+            404, "SESSION_NOT_FOUND", e.getMessage(), LocalDateTime.now()
+        );
+        return ResponseEntity.status(404).body(error);
+    }
+
+    /** 상태 불일치 (409) — 잘못된 상태 전이 */
+    @ExceptionHandler(InvalidStateException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidState(InvalidStateException e) {
+        log.warn("[상태 불일치] {}", e.getMessage());
+        ErrorResponse error = new ErrorResponse(
+            409, "INVALID_STATE", e.getMessage(), LocalDateTime.now()
+        );
+        return ResponseEntity.status(409).body(error);
+    }
+
     /** 리소스 충돌 (409) — 중복된 아이디 등 */
     @ExceptionHandler(ConflictException.class)
     public ResponseEntity<ErrorResponse> handleConflict(ConflictException e) {

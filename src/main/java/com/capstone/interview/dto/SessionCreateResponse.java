@@ -6,7 +6,9 @@ public record SessionCreateResponse(
 ) {
     public record Data(
         String sessionId,
-        LiveKitInfo livekit
+        LiveKitInfo livekit,
+        int answerTimeLimitSeconds,
+        int totalDurationSeconds
     ) {}
 
     public record LiveKitInfo(

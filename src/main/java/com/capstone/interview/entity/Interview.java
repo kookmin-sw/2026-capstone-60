@@ -32,8 +32,14 @@ public class Interview {
     @Column(name = "session_id", unique = true, nullable = false, length = 50)
     private String sessionId;
 
+    @Column(name = "room_name", length = 50)
+    private String roomName;
+
     @Column(nullable = false, length = 50)
     private String category;
+
+    @Column(name = "duration_minutes")
+    private Integer durationMinutes;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -49,12 +55,15 @@ public class Interview {
     private LocalDateTime updatedAt;
 
     @Builder
-    public Interview(Member member, Resume resume, CoverLetter coverLetter, String category, String sessionId) {
+    public Interview(Member member, Resume resume, CoverLetter coverLetter,
+                     String category, String sessionId, String roomName, Integer durationMinutes) {
         this.member = member;
         this.resume = resume;
         this.coverLetter = coverLetter;
         this.category = category;
         this.sessionId = sessionId;
+        this.roomName = roomName;
+        this.durationMinutes = durationMinutes;
         this.status = InterviewStatus.READY;
     }
 

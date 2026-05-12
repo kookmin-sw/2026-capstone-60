@@ -1,13 +1,15 @@
 package com.capstone.interview.entity;
 
 import jakarta.persistence.*;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "interview_qnas")
+@Table(name = "interview_qnas",
+       uniqueConstraints = @UniqueConstraint(columnNames = {"interview_id", "sequence_number"}))
 @Getter
 @NoArgsConstructor
 public class InterviewQna {
@@ -23,7 +25,7 @@ public class InterviewQna {
     @Column(name = "sequence_number", nullable = false)
     private Integer sequenceNumber;
 
-    @Column(name = "question_content", nullable = false, columnDefinition = "TEXT")
+    @Column(name = "question_content", columnDefinition = "TEXT")
     private String questionContent;
 
     @Column(name = "answer_content", columnDefinition = "TEXT")
@@ -32,10 +34,12 @@ public class InterviewQna {
     @Column(name = "is_follow_up", nullable = false)
     private boolean isFollowUp = false;
 
-    // 셀프 참조: 꼬리질문인 경우 부모 질문 ID
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "parent_id")
     private InterviewQna parent;
+
+    @Column(name = "intent", length = 255)
+    private String intent;
 
     @Column(name = "model_answer", columnDefinition = "TEXT")
     private String modelAnswer;
@@ -45,6 +49,12 @@ public class InterviewQna {
 
     @Column(name = "audio_url", length = 1024)
     private String audioUrl;
+
+    @Column(name = "started_at")
+    private LocalDateTime startedAt;
+
+    @Column(name = "expires_at")
+    private LocalDateTime expiresAt;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -56,6 +66,34 @@ public class InterviewQna {
     public void saveFeedback(String modelAnswer, String individualFeedback) {
         this.modelAnswer = modelAnswer;
         this.individualFeedback = individualFeedback;
+    @Builder
+    public InterviewQna(Interview interview, Integer sequenceNumber, String questionContent,
+                        String answerContent, boolean isFollowUp, InterviewQna parent,
+                        String intent, LocalDateTime startedAt, LocalDateTime expiresAt) {
+        this.interview = interview;
+        this.sequenceNumber = sequenceNumber;
+        this.questionContent = questionContent;
+        this.answerContent = answerContent;
+        this.isFollowUp = isFollowUp;
+        this.parent = parent;
+        this.intent = intent;
+        this.startedAt = startedAt;
+        this.expiresAt = expiresAt;
+    }
+
+    public void updateAnswer(String answerContent) {
+        this.answerContent = answerContent;
+    }
+
+    public void updateQuestion(String questionContent, String intent, boolean isFollowUp) {
+        this.questionContent = questionContent;
+        this.intent = intent;
+        this.isFollowUp = isFollowUp;
+    }
+
+    public void updateTimer(LocalDateTime startedAt, LocalDateTime expiresAt) {
+        this.startedAt = startedAt;
+        this.expiresAt = expiresAt;
     }
 
     @PrePersist

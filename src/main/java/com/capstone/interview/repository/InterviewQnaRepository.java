@@ -11,3 +11,11 @@ public interface InterviewQnaRepository extends JpaRepository<InterviewQna, Long
     // 면접의 모든 질문-답변을 순서대로 조회
     List<InterviewQna> findByInterviewOrderBySequenceNumberAsc(Interview interview);
 }
+import java.util.Optional;
+
+public interface InterviewQnaRepository extends JpaRepository<InterviewQna, Long> {
+
+    Optional<InterviewQna> findByInterviewAndSequenceNumber(Interview interview, Integer sequenceNumber);
+
+    int countByInterview(Interview interview);
+}
