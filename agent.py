@@ -83,6 +83,7 @@ def _load_metadata(ctx: JobContext) -> dict[str, Any]:
         "sessionId": fallback_session,
         "jobRole": "BACKEND",
         "resumeText": "Spring Boot 기반 백엔드 3년차. Redis, Kafka, AWS 운영 경험.",
+        "coverLetterText": "",
     }
 
 
@@ -97,6 +98,7 @@ class InterviewerAgent(Agent):
     - on_enter: 첫 질문을 생성해 발화
     - llm_node: 기본 LLM 대신 LLMService 호출 → 다음 발화 yield
     - session: 대화 이력을 보유하는 InterviewSession 하나 (프로세스당 1개)
+    - Data Message 핸들러: Backend 로부터 NEXT/END 수신 처리
     """
 
     def __init__(
@@ -104,6 +106,7 @@ class InterviewerAgent(Agent):
         session_id: str,
         job_role: str,
         resume_text: str,
+        cover_letter_text: str,
         llm_service: "LLMService | MockLLMService",
     ):
         super().__init__(instructions="")  # LiveKit 기본 LLM 미사용
@@ -112,20 +115,50 @@ class InterviewerAgent(Agent):
             session_id=session_id,
             job_role=job_role,
             resume_text=resume_text,
+            cover_letter_text=cover_letter_text,
             system_prompt=llm_service.build_system_prompt(job_role, resume_text),
         )
 
     async def on_enter(self) -> None:
-        """Room 입장 직후 첫 질문을 송출."""
-        # STT 가 사용자 발화를 텍스트로 확정할 때마다 로그에 찍는다.
-        # llm_node 보다 먼저 호출되므로 "인식이 제대로 되었나" 를 가장 빨리 확인할 수 있다.
+        """Room 입장 직후: 사용자 참가 대기 → STT 버퍼링 등록 → Data Message 핸들러 등록 → 첫 질문 발화."""
+
+        # ── 사용자 참가 대기 (§9.3: Frontend가 Room 접속 전에 발화하면 첫 질문을 놓침) ──
+        await self.session.wait_for_participant()
+
+        # ── STT 버퍼링 (§5.3.1) ──
+        # VAD 기반 자동 턴 종료를 끈 상태이므로 STT 결과를 Agent가 직접 모아둔다.
         @self.session.on("user_input_transcribed")
         def _on_user_transcribed(ev):
-            if getattr(ev, "is_final", True):
-                logger.info("[STT 확정] %s", getattr(ev, "transcript", ""))
+            transcript = getattr(ev, "transcript", "")
+            if getattr(ev, "is_final", True) and transcript:
+                self.interview.append_to_buffer(transcript)
+                logger.info("[STT 확정] %s", transcript)
             else:
-                logger.debug("[STT 중간] %s", getattr(ev, "transcript", ""))
+                logger.debug("[STT 중간] %s", transcript)
 
+        # ── Data Message 핸들러 등록 (§5.3) ──
+        @self.session.room.on("data_received")
+        def _on_data_received(data: bytes, *args, **kwargs):
+            """Backend → Agent: NEXT / END 메시지 처리."""
+            try:
+                msg = json.loads(data.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                logger.warning("Data Message 파싱 실패: %s", e)
+                return
+
+            msg_type = msg.get("type", "")
+            payload = msg.get("payload", {})
+
+            if msg_type == "NEXT":
+                import asyncio
+                asyncio.ensure_future(self._handle_next(payload))
+            elif msg_type == "END":
+                import asyncio
+                asyncio.ensure_future(self._handle_end(payload))
+            else:
+                logger.debug("알 수 없는 Data Message type: %s", msg_type)
+
+        # ── 첫 질문 생성 및 발화 ──
         try:
             result = await self._llm_service.generate_first_question(self.interview)
         except Exception as e:
@@ -138,6 +171,63 @@ class InterviewerAgent(Agent):
         logger.info("[첫 질문] %s", result["question"])
         await self.session.say(result["question"])
 
+    async def _handle_next(self, payload: dict) -> None:
+        """NEXT 수신: ① STT 버퍼 flush → ② (향후) QnA 저장 → ③ 다음 질문 생성·발화.
+
+        §5.3 처리 순서:
+        1. STT 버퍼에 누적된 텍스트를 직전 턴에 기록
+        2. 직전 턴의 Q+A를 Backend로 저장 (작업 2에서 구현)
+        3. 다음 질문 생성
+        4. TTS 발화 → 재생 완료 후 QUESTION 메시지 publish (작업 2에서 구현)
+        """
+        turn_number = payload.get("turnNumber", 0)
+        logger.info("[NEXT 수신] turnNumber=%d", turn_number)
+
+        # ① STT 버퍼 flush → 직전 턴 답변 기록
+        answer = self.interview.flush_buffer()
+        self.interview.add_answer(answer)
+        logger.info("[답변 확정] turn=%d answer_len=%d", turn_number - 1, len(answer))
+
+        # ② QnA 저장 (TODO: 작업 2에서 fire-and-forget 백그라운드 태스크로 구현)
+
+        # ③ 다음 질문 생성·발화
+        try:
+            result = await self._llm_service.generate_next_topic(self.interview)
+        except Exception as e:
+            logger.exception("다음 질문 생성 실패 (NEXT): %s", e)
+            await self.session.say(
+                "죄송합니다, 잠시 문제가 생겼습니다. 다음 질문으로 넘어가겠습니다."
+            )
+            return
+
+        logger.info("[다음 질문] turn=%d question=%s", turn_number, result["question"])
+        await self.session.say(result["question"])
+
+        # ④ QUESTION publish (TODO: 작업 2에서 TTS 완료 후 publish 구현)
+
+    async def _handle_end(self, payload: dict) -> None:
+        """END 수신: ① STT 버퍼 flush → ② (향후) 마지막 턴 저장 (await) → ③ shutdown.
+
+        §5.3 처리 순서:
+        1. STT 버퍼 내용을 마지막 턴에 기록
+        2. 마지막 턴 저장 — await로 기다림 (작업 2에서 구현)
+        3. session.shutdown()
+        """
+        reason = payload.get("reason", "UNKNOWN")
+        logger.info("[END 수신] reason=%s", reason)
+
+        # ① STT 버퍼 flush → 마지막 턴 답변 기록
+        answer = self.interview.flush_buffer()
+        self.interview.add_answer(answer)
+        logger.info("[마지막 답변 확정] answer_len=%d", len(answer))
+
+        # ② 마지막 턴 QnA 저장 (TODO: 작업 2에서 await로 구현)
+
+        # ③ shutdown
+        logger.info("[면접 종료] session=%s total_turns=%d",
+                    self.interview.session_id, len(self.interview.history))
+        await self.session.shutdown()
+
     async def llm_node(
         self,
         chat_ctx: llm_types.ChatContext,
@@ -148,14 +238,13 @@ class InterviewerAgent(Agent):
         기본 LLM 노드 오버라이드.
         사용자 답변이 끝날 때마다 호출된다.
 
-        기본 동작: "새 주제 질문" 생성 (중복 주제 자동 회피).
-        판단 AI 가 "꼬리질문이 필요하다" 고 결정하면 그때만 follow-up 으로 분기.
-        현재는 판단 AI 가 없어 항상 새 주제로 진행한다.
-
-        TODO: 판단 AI(FollowUpJudge) 가 추가되면 여기서 FOLLOW_UP 분기.
+        NOTE: 턴 전환은 이제 Backend의 NEXT Data Message로 제어된다.
+        이 메서드는 VAD 기반 자동 턴 종료가 비활성화된 상태에서는
+        호출되지 않을 수 있다. NEXT 핸들러가 메인 질문 생성 경로.
+        기존 호환성을 위해 유지하되, 실제 면접 흐름에서는 _handle_next가 주 경로.
         """
         user_answer = _extract_last_user_text(chat_ctx)
-        logger.info("[답변 수신] %s", user_answer)
+        logger.info("[llm_node 답변 수신] %s", user_answer)
 
         if not user_answer.strip():
             yield "답변이 제대로 들리지 않았습니다. 다시 말씀해 주시겠어요?"
@@ -202,6 +291,7 @@ async def entrypoint(ctx: JobContext) -> None:
     session_id = metadata["sessionId"]
     job_role = metadata.get("jobRole", "BACKEND")
     resume_text = metadata.get("resumeText", "")
+    cover_letter_text = metadata.get("coverLetterText", "")
 
     ctx.log_context_fields = {
         "room": ctx.room.name,
@@ -213,7 +303,7 @@ async def entrypoint(ctx: JobContext) -> None:
         session_id,
         job_role,
         len(resume_text),
-        len(metadata.get("coverLetterText", "")),
+        len(cover_letter_text),
     )
 
     llm_service = create_llm_service()
@@ -240,6 +330,7 @@ async def entrypoint(ctx: JobContext) -> None:
         session_id=session_id,
         job_role=job_role,
         resume_text=resume_text,
+        cover_letter_text=cover_letter_text,
         llm_service=llm_service,
     )
 
