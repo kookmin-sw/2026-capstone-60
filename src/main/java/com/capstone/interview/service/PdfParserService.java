@@ -6,6 +6,8 @@ import org.apache.pdfbox.text.PDFTextStripper;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import org.apache.pdfbox.Loader; // 머지 오류 해결
+
 import java.io.IOException;
 import java.io.InputStream;
 
@@ -26,7 +28,8 @@ public class PdfParserService {
      */
     public String extractText(MultipartFile file) throws IOException {
         try (InputStream inputStream = file.getInputStream();
-             PDDocument document = PDDocument.load(inputStream)) {
+            PDDocument document = Loader.loadPDF(inputStream) // load를 Loader.loadPDF로!
+            // PDDocument document = PDDocument.load(inputStream)) {
 
             PDFTextStripper stripper = new PDFTextStripper();
             String text = stripper.getText(document);
