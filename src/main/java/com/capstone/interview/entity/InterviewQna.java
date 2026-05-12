@@ -62,6 +62,10 @@ public class InterviewQna {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
+    // EvaluationService에서 LLM 평가 결과(모범답안 + 개별피드백) 저장 시 호출
+    public void saveFeedback(String modelAnswer, String individualFeedback) {
+        this.modelAnswer = modelAnswer;
+        this.individualFeedback = individualFeedback;
     @Builder
     public InterviewQna(Interview interview, Integer sequenceNumber, String questionContent,
                         String answerContent, boolean isFollowUp, InterviewQna parent,
@@ -101,5 +105,16 @@ public class InterviewQna {
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
+    }
+
+    // [TEST] 테스트용 더미 QnA 생성 팩토리 메서드 (실제 배포 시 삭제)
+    public static InterviewQna createDummy(Interview interview, int seq, String question, String answer, boolean followUp) {
+        InterviewQna qna = new InterviewQna();
+        qna.interview = interview;
+        qna.sequenceNumber = seq;
+        qna.questionContent = question;
+        qna.answerContent = answer;
+        qna.isFollowUp = followUp;
+        return qna;
     }
 }

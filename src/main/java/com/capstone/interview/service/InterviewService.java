@@ -42,6 +42,7 @@ public class InterviewService {
     private final ResumeRepository resumeRepository;
     private final CoverLetterRepository coverLetterRepository;
     private final LiveKitService liveKitService;
+    private final EvaluationService evaluationService;
     private final LiveKitRoomService liveKitRoomService;
     private final AgentDispatchService agentDispatchService;
 
@@ -190,6 +191,10 @@ public class InterviewService {
 
         // 3. 세션 상태 COMPLETED 전환
         interview.complete();
+        interviewRepository.save(interview);
+
+        // EvaluationService 비동기 호출 (삭제)
+        //evaluationService.evaluate(sessionId);
 
         return new SessionEndResponse(
                 true,
