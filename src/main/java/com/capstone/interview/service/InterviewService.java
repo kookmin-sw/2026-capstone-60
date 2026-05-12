@@ -85,8 +85,8 @@ public class InterviewService {
         interview.complete();
         interviewRepository.save(interview);
 
-        // EvaluationService 비동기 호출
-        evaluationService.evaluate(sessionId);
+        // EvaluationService 비동기 호출 (삭제)
+        //evaluationService.evaluate(sessionId);
 
         return new SessionEndResponse(
                 true,
