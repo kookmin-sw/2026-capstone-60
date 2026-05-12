@@ -1,4 +1,4 @@
-import CompetencyRadarChart from "./CompetencyRadarChart";
+import CompetencyRadarChart from "./CompetencyRadarChart.jsx";
 
 function formatDate(value) {
   if (!value) return "-";
