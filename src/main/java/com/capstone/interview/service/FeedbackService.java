@@ -57,6 +57,7 @@ public class FeedbackService {
                         .modelAnswer(qna.getModelAnswer())
                         .individualFeedback(qna.getIndividualFeedback())
                         .isFollowUp(qna.isFollowUp()) // 엔티티의 메서드 사용
+                        .parentSequenceNumber(qna.getParent() != null ? qna.getParent().getSequenceNumber() : null)
                         .build())
                 .toList();
 
