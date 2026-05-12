@@ -66,6 +66,7 @@ public class InterviewQna {
     public void saveFeedback(String modelAnswer, String individualFeedback) {
         this.modelAnswer = modelAnswer;
         this.individualFeedback = individualFeedback;
+    }
     @Builder
     public InterviewQna(Interview interview, Integer sequenceNumber, String questionContent,
                         String answerContent, boolean isFollowUp, InterviewQna parent,
