@@ -1,4 +1,4 @@
-import CompetencyRadarChart from "./CompetencyRadarChart";
+import CompetencyRadarChart from "./CompetencyRadarChart.jsx";
 
 export default function ResultView({ result, onRestart, onOpenHistory }) {
   // 백엔드 FeedbackResponse 구조: totalFeedback, overallScore(상/중/하), competencyChart(JSON), qaPairs[]
