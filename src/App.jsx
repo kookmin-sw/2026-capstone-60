@@ -22,6 +22,7 @@ import {
   endInterviewSession,
   getInterviewResult,
   isMockMode,
+  triggerEvaluation,
   nextQuestion,
 } from "./api/interviewApi";
 
@@ -192,6 +193,8 @@ export default function App() {
         setEnding(true);
         setError("");
         await endInterviewSession(session.sessionId, reason);
+        // 세션 종료 트랜잭션 커밋 후 평가 트리거 (별도 요청)
+        await triggerEvaluation(session.sessionId);
         navigate(ROUTE.EVALUATING);
       } catch (endError) {
         setError(endError.message);
@@ -251,7 +254,9 @@ export default function App() {
       setHistoryLoading(true);
       setError("");
       const response = await fetchInterviewRecords();
-      setHistoryRecords(response?.data || []);
+      // 백엔드가 배열을 직접 반환하므로 response 자체가 배열
+      const records = Array.isArray(response) ? response : (response?.data || []);
+      setHistoryRecords(records);
       navigate(ROUTE.HISTORY);
     } catch (historyError) {
       setError(historyError.message);
@@ -260,12 +265,31 @@ export default function App() {
     }
   };
 
+  // /history 경로에서 새로고침 시 자동으로 목록 불러오기
+  useEffect(() => {
+    if (location.pathname === ROUTE.HISTORY && historyRecords.length === 0 && !historyLoading && user) {
+      (async () => {
+        try {
+          setHistoryLoading(true);
+          const response = await fetchInterviewRecords();
+          const records = Array.isArray(response) ? response : (response?.data || []);
+          setHistoryRecords(records);
+        } catch {
+          // 조용히 실패
+        } finally {
+          setHistoryLoading(false);
+        }
+      })();
+    }
+  }, [location.pathname, user]);
+
   const openHistoryDetail = async (recordId) => {
     try {
       setHistoryDetailLoading(true);
       setError("");
       const response = await fetchInterviewRecordDetail(recordId);
-      setHistoryDetail(response?.data || null);
+      // 백엔드가 FeedbackResponse 객체를 직접 반환
+      setHistoryDetail(response?.data || response || null);
       navigate(`${ROUTE.HISTORY}/${recordId}`);
     } catch (detailError) {
       setError(detailError.message);
@@ -288,30 +312,13 @@ export default function App() {
       setHistoryDetailLoading(true);
       setError("");
       const response = await fetchInterviewRecordDetail(recordId);
-      setHistoryDetail(response?.data || null);
+      setHistoryDetail(response?.data || response || null);
     } catch (detailError) {
       setError(detailError.message);
     } finally {
       setHistoryDetailLoading(false);
     }
   }, []);
-
-  const HistoryDetailRoute = () => {
-    const { recordId } = useParams();
-
-    useEffect(() => {
-      if (!recordId) return;
-      openHistoryDetailById(recordId);
-    }, [recordId, openHistoryDetailById]);
-
-    return (
-      <HistoryDetailView
-        loading={historyDetailLoading}
-        record={historyDetail}
-        onBack={openHistory}
-      />
-    );
-  };
 
   const renderContent = () => {
     if (bootstrapping) {
@@ -427,7 +434,17 @@ export default function App() {
         />
         <Route
           path={`${ROUTE.HISTORY}/:recordId`}
-          element={user ? <HistoryDetailRoute /> : <Navigate to={ROUTE.LOGIN} replace />}
+          element={
+            user ? (
+              <HistoryDetailView
+                loading={historyDetailLoading}
+                record={historyDetail}
+                onBack={openHistory}
+              />
+            ) : (
+              <Navigate to={ROUTE.LOGIN} replace />
+            )
+          }
         />
         <Route path={ROUTE.API_TEST} element={<ApiTestPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

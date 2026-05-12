@@ -51,28 +51,97 @@ export function endInterviewSession(sessionId, reason) {
   });
 }
 
+/**
+ * 평가 서비스 직접 실행 API (추가)
+ * 백엔드의 '직접 호출' 로직: /{sessionId}/evaluate
+ */
+export function triggerEvaluation(sessionId) {
+  // 백엔드 설계대로 /{sessionId}/evaluate 호출
+  return request(`/${sessionId}/evaluate`, {
+    method: "POST"
+  });
+}
+
+// //피드백 결과 조회 (삭제)
+// export function getInterviewResult(sessionId) {
+//   if (USE_MOCK_RESULT) {
+//     return getMockResult(sessionId);
+//   }
+//   //수정. 수정전 : `/sessions/${sessionId}/result`
+//   return request(`/feedback/${sessionId}`, {
+//     method: "GET",
+//     allowStatuses: [202],
+//   }).then((payload) => {
+//     const isEvaluating =
+//       payload?.__httpStatus === 202 ||
+//       payload?.code === "EVALUATING" ||
+//       payload?.data?.status === "EVALUATING";
+//     if (isEvaluating) {
+//       return {
+//         success: true,
+//         pending: true,
+//         message: payload?.message || payload?.data?.message || "면접 평가가 진행 중입니다.",
+//       };
+//     }
+//     return payload;
+//   });
+// }
+
+
+//피드백 결과 조회 (실제 백엔드 연동)
 export function getInterviewResult(sessionId) {
   if (USE_MOCK_RESULT) {
     return getMockResult(sessionId);
   }
-  return request(`/sessions/${sessionId}/result`, {
+
+  return request(`/feedback/${sessionId}`, {
     method: "GET",
-    allowStatuses: [202],
   }).then((payload) => {
-    const isEvaluating =
-      payload?.__httpStatus === 202 ||
-      payload?.code === "EVALUATING" ||
-      payload?.data?.status === "EVALUATING";
-    if (isEvaluating) {
+    // 아직 평가 중인 경우 (백엔드가 success: false를 반환)
+    if (payload.success === false) {
       return {
         success: true,
         pending: true,
-        message: payload?.message || payload?.data?.message || "면접 평가가 진행 중입니다.",
+        message: payload.totalFeedback || "AI 피드백이 생성 중입니다...",
       };
     }
-    return payload;
+
+    // 평가 완료 시
+    return {
+      success: true,
+      pending: false,
+      data: payload,
+    };
   });
 }
+
+// //실제 피드백 결과 조회
+// export function getInterviewResult(sessionId) {
+//   if (USE_MOCK_RESULT) {
+//     return getMockResult(sessionId);
+//   }
+//
+//   return request(`/feedback/${sessionId}`, {
+//     method: "GET",
+//     allowStatuses: [202],
+//   }).then((payload) => {
+//     // 1. 아직 평가 중인 경우 (백엔드가 success: false를 주거나 HTTP 202인 경우)
+//     if (payload.success === false || payload.__httpStatus === 202) {
+//       return {
+//         success: true,
+//         pending: true, // true면 계속 EvaluatingView(로딩화면)가 떠있습니다.
+//         message: payload.totalFeedback || "AI 피드백이 생성 중입니다...",
+//       };
+//     }
+//
+//     // 2. 평가 완료 시 (데이터가 정상적으로 왔을 때)
+//     return {
+//       success: true,
+//       pending: false, // ★ false가 되어야 로딩 화면이 닫히고 결과 화면이 뜹니다.
+//       data: payload   // 백엔드 FeedbackResponse(qaPairs, totalFeedback 등) 전체
+//     };
+//   });
+//}
 
 function makeId(prefix) {
   const random = Math.random().toString(36).slice(2, 10);

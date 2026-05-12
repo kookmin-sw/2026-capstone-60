@@ -1,38 +1,34 @@
+import CompetencyRadarChart from "./CompetencyRadarChart";
+
 export default function ResultView({ result, onRestart, onOpenHistory }) {
-  const score = Number(result.score) || 0;
-  const level = score >= 85 ? "상" : score >= 70 ? "중" : "보완 필요";
-  const technical = Math.min(100, score + 4);
-  const logic = Math.max(50, score - 3);
-  const depth = Math.max(45, score - 8);
-  const communication = Math.min(100, score + 1);
+  // 백엔드 FeedbackResponse 구조: totalFeedback, overallScore(상/중/하), competencyChart(JSON), qaPairs[]
+  const overallScore = result.overallScore || "N/A";
+  const level = overallScore === "상" ? "우수" : overallScore === "중" ? "보통" : "보완 필요";
+
+  // competencyChart 파싱: {"유형명": 점수, ...}
+  let chartData = {};
+  try {
+    chartData = typeof result.competencyChart === "string"
+      ? JSON.parse(result.competencyChart)
+      : result.competencyChart || {};
+  } catch {
+    chartData = {};
+  }
 
   return (
     <div className="result-layout">
       <section className="card">
         <p className="eyebrow">Interview Result</p>
         <h2>종합 피드백</h2>
-        <p className="subtext">{result.overallFeedback}</p>
-        <div className="score-chip">점수 {result.score}점</div>
+        <div className="score-chip">종합 평가: {overallScore}</div>
         <p className="subtext compact">현재 레벨: {level}</p>
+        <p className="subtext" style={{ whiteSpace: "pre-wrap", marginTop: "1rem" }}>
+          {result.totalFeedback}
+        </p>
       </section>
 
-      <section className="card metric-grid">
-        <article className="metric-item">
-          <span>기술 정확성</span>
-          <strong>{technical}</strong>
-        </article>
-        <article className="metric-item">
-          <span>논리성</span>
-          <strong>{logic}</strong>
-        </article>
-        <article className="metric-item">
-          <span>깊이</span>
-          <strong>{depth}</strong>
-        </article>
-        <article className="metric-item">
-          <span>전달력</span>
-          <strong>{communication}</strong>
-        </article>
+      <section className="card">
+        <CompetencyRadarChart chartData={chartData} />
       </section>
 
       <section className="card">
@@ -49,15 +45,19 @@ export default function ResultView({ result, onRestart, onOpenHistory }) {
         </div>
 
         <div className="qa-list">
-          {result.qaList?.map((qa) => (
-            <article key={qa.turn} className="qa-item">
-              <h4>Q{qa.turn}. {qa.question}</h4>
+          {result.qaPairs?.map((qa) => (
+            <article key={qa.sequenceNumber} className="qa-item">
+              <h4>Q{qa.sequenceNumber}. {qa.questionContent}</h4>
               <p>
-                <strong>내 답변:</strong> {qa.userAnswer}
+                <strong>내 답변:</strong> {qa.answerContent || "답변 없음"}
               </p>
               <p>
-                <strong>추천 답변:</strong> {qa.bestAnswer}
+                <strong>모범 답안:</strong> {qa.modelAnswer}
               </p>
+              <p>
+                <strong>피드백:</strong> {qa.individualFeedback}
+              </p>
+              {qa.isFollowUp && <span className="chip warn">질문 {qa.parentSequenceNumber ?? (qa.sequenceNumber - 1)}번의 꼬리질문입니다.</span>}
             </article>
           ))}
         </div>
