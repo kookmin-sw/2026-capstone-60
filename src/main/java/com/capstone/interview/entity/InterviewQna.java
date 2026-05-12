@@ -68,4 +68,15 @@ public class InterviewQna {
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
     }
+
+    // [TEST] 테스트용 더미 QnA 생성 팩토리 메서드 (실제 배포 시 삭제)
+    public static InterviewQna createDummy(Interview interview, int seq, String question, String answer, boolean followUp) {
+        InterviewQna qna = new InterviewQna();
+        qna.interview = interview;
+        qna.sequenceNumber = seq;
+        qna.questionContent = question;
+        qna.answerContent = answer;
+        qna.isFollowUp = followUp;
+        return qna;
+    }
 }
