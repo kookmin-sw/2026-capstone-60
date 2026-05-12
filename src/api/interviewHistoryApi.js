@@ -1,43 +1,45 @@
-import { getStoredUser } from "../auth/tokenStorage";
 import { fetchWithAuth } from "./apiClient";
 
 const BACKEND_BASE_URL =
-  import.meta.env.VITE_BACKEND_BASE_URL || "http://localhost:8080";
+    import.meta.env.VITE_BACKEND_BASE_URL || "http://localhost:8080";
 const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || `${BACKEND_BASE_URL}/v1/interviews`;
+    import.meta.env.VITE_API_BASE_URL || `${BACKEND_BASE_URL}/v1/interviews`;
 const USE_MOCK_ALL = String(import.meta.env.VITE_USE_MOCK).toLowerCase() === "true";
 const USE_MOCK_HISTORY =
-  USE_MOCK_ALL ||
-  String(import.meta.env.VITE_USE_MOCK_INTERVIEW_HISTORY).toLowerCase() === "true";
+    USE_MOCK_ALL ||
+    String(import.meta.env.VITE_USE_MOCK_INTERVIEW_HISTORY).toLowerCase() === "true";
 const HISTORY_KEY = "interviewHistoryRecords";
 
 function request(path, options = {}) {
   return fetchWithAuth(`${API_BASE_URL}${path}`, options);
 }
 
+//면접 피드백 저장 (백엔드에서 평가 완료 시 자동 저장되므로 별도 호출 불필요)
 export async function saveInterviewRecord(recordInput) {
   if (USE_MOCK_HISTORY) {
     return saveMockInterviewRecord(recordInput);
   }
-  return request("/results", {
-    method: "POST",
-    body: JSON.stringify(recordInput),
-  });
+  // 실제 백엔드에서는 endSession → evaluate 흐름에서 자동 저장됨
+  return { success: true };
 }
 
+//피드백 목록 조회
 export async function fetchInterviewRecords() {
   if (USE_MOCK_HISTORY) {
     return fetchMockInterviewRecords();
   }
-  return request("/results", { method: "GET" });
+  return request("/feedbackList", { method: "GET" });
 }
 
+//피드백 상세 조회
 export async function fetchInterviewRecordDetail(recordId) {
   if (USE_MOCK_HISTORY) {
     return fetchMockInterviewRecordDetail(recordId);
   }
-  return request(`/results/${recordId}`, { method: "GET" });
+  return request(`/feedback/${recordId}`, { method: "GET" });
 }
+
+// ─── Mock 구현 ───────────────────────────────────────────────────────
 
 function getMockRecords() {
   const raw = localStorage.getItem(HISTORY_KEY);
@@ -55,14 +57,9 @@ function setMockRecords(records) {
 }
 
 async function saveMockInterviewRecord(recordInput) {
-  const user = getStoredUser();
-  if (!user?.id) {
-    throw new Error("로그인이 필요합니다.");
-  }
   const records = getMockRecords();
   const next = {
     id: `hist-${Date.now()}`,
-    userId: user.id,
     createdAt: new Date().toISOString(),
     ...recordInput,
   };
@@ -71,32 +68,21 @@ async function saveMockInterviewRecord(recordInput) {
 }
 
 async function fetchMockInterviewRecords() {
-  const user = getStoredUser();
-  if (!user?.id) {
-    throw new Error("로그인이 필요합니다.");
-  }
-  const records = getMockRecords()
-    .filter((record) => record.userId === user.id)
-    .map((record) => ({
-      id: record.id,
-      sessionId: record.sessionId,
-      score: record.result?.score ?? null,
-      overallFeedback: record.result?.overallFeedback ?? "",
-      jobField: record.jobField,
-      durationMinutes: record.durationMinutes,
-      createdAt: record.createdAt,
-    }));
+  const records = getMockRecords().map((record) => ({
+        id: record.id,
+        sessionId: record.sessionId,
+        overallScore: record.result?.overallScore ?? null,
+        totalFeedback: record.result?.totalFeedback ?? "",
+        jobField: record.jobField,
+        durationMinutes: record.durationMinutes,
+        createdAt: record.createdAt,
+      }));
   return { success: true, data: records };
 }
 
 async function fetchMockInterviewRecordDetail(recordId) {
-  const user = getStoredUser();
-  if (!user?.id) {
-    throw new Error("로그인이 필요합니다.");
-  }
-  const record = getMockRecords().find(
-    (item) => item.id === recordId && item.userId === user.id
-  );
+  const records = getMockRecords();
+  const record = records.find((item) => item.id === recordId);
   if (!record) {
     throw new Error("면접 기록을 찾을 수 없습니다.");
   }

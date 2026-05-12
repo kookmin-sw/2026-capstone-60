@@ -22,15 +22,14 @@ export default function HistoryListView({ loading, records, onSelectRecord }) {
 
       <div className="history-list">
         {records.map((record) => (
-          <article key={record.id} className="history-item">
+          <article key={record.sessionId} className="history-item">
             <div>
-              <strong>{record.jobField || "직무 미지정"} 면접</strong>
+              <strong>{record.category || "직무 미지정"} 면접</strong>
               <p className="subtext compact">
-                점수 {record.score ?? "-"} · {record.durationMinutes ?? "-"}분 ·{" "}
-                {formatDate(record.createdAt)}
+                Score: {record.overallScore ?? "-"} · {formatDate(record.createdAt)}
               </p>
             </div>
-            <button className="ghost-btn" type="button" onClick={() => onSelectRecord(record.id)}>
+            <button className="ghost-btn" type="button" onClick={() => onSelectRecord(record.sessionId)}>
               상세 보기
             </button>
           </article>
