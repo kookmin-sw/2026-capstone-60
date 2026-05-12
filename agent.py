@@ -1,0 +1,255 @@
+"""
+AI 모의면접 LiveKit Agent.
+
+워커 프로세스 진입점. Spring 백엔드의 dispatch 로 Room 이 배정되면
+자식 프로세스에서 `entrypoint()` 가 실행된다.
+
+책임 범위:
+- LiveKit 파이프라인(STT/턴감지/TTS) 세팅 — STT/TTS 는 LiveKit Inference 사용
+- LLM 호출은 Bedrock 직접 (boto3) — ai/llm_service.py
+- 사용자 답변을 LLM 에 전달하고, 생성된 질문을 TTS 로 발화
+
+하지 않는 일:
+- HTTP 서버 노출 (Agent 는 Worker 이지 HTTP 서버가 아님)
+- DB 저장 (나중에 Spring API 호출로 추가 가능)
+- 꼬리질문 여부 판단 (기본은 새 주제 질문. 판단 AI 추가 시 FOLLOW_UP 분기)
+
+실행:
+    python agent.py console    # 로컬 터미널에서 음성 대화 테스트
+    python agent.py dev        # LiveKit Cloud 에 dev 워커로 연결
+    python agent.py start      # 프로덕션 워커
+"""
+
+import json
+import logging
+import os
+import uuid
+from typing import Any, AsyncIterable
+
+from dotenv import load_dotenv
+from livekit.agents import (
+    Agent,
+    AgentServer,
+    AgentSession,
+    JobContext,
+    JobProcess,
+    RoomInputOptions,
+    RoomOutputOptions,
+    TurnHandlingOptions,
+    cli,
+    inference,
+    llm as llm_types,
+)
+from livekit.plugins import silero
+
+from ai.llm_service import LLMService, MockLLMService, create_llm_service
+from ai.session import InterviewSession
+
+load_dotenv()
+
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logger = logging.getLogger("livekit-agent")
+
+
+# ─────────────────────────────────────────────────────────
+# Metadata 로딩 (DISPATCH_CONTRACT.md 스펙)
+# ─────────────────────────────────────────────────────────
+
+def _load_metadata(ctx: JobContext) -> dict[str, Any]:
+    """우선순위: ctx.job.metadata → DEV_METADATA 환경변수 → 내장 기본값.
+
+    ── resumeText 크기 주의 ──
+    현재 설계는 Spring 이 이력서 원문을 metadata 에 통째로 실어 전달한다
+    (INTEGRATION_CONTRACT.md §3.3 참고). LiveKit dispatch metadata 는 JSON
+    문자열이며 수 KB 이내가 안전하다. 이력서가 10KB 를 넘기 시작하면
+    dispatch 실패·지연이 발생할 수 있다.
+
+    [향후 마이그레이션 경로]
+    resumeId 만 metadata 로 넘기고 Agent 가 Spring 의
+    `GET /v1/resumes/{id}/text` 로 조회하는 방식으로 전환한다.
+    무증상으로 질문 품질이 급격히 떨어지면 metadata 가 잘려 전달된 것
+    아닌지 먼저 의심한다. (아래 로그의 `resume_len` 필드로 확인)
+    """
+    raw = ctx.job.metadata or os.getenv("DEV_METADATA") or ""
+    if raw.strip():
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as e:
+            logger.error("metadata JSON 파싱 실패: %s", e)
+
+    fallback_session = f"dev-{uuid.uuid4()}"
+    logger.warning("metadata 없음 — dev fallback 사용 (sessionId=%s)", fallback_session)
+    return {
+        "sessionId": fallback_session,
+        "jobRole": "BACKEND",
+        "resumeText": "Spring Boot 기반 백엔드 3년차. Redis, Kafka, AWS 운영 경험.",
+    }
+
+
+# ─────────────────────────────────────────────────────────
+# 면접관 Agent
+# ─────────────────────────────────────────────────────────
+
+class InterviewerAgent(Agent):
+    """
+    면접관 역할 Agent.
+
+    - on_enter: 첫 질문을 생성해 발화
+    - llm_node: 기본 LLM 대신 LLMService 호출 → 다음 발화 yield
+    - session: 대화 이력을 보유하는 InterviewSession 하나 (프로세스당 1개)
+    """
+
+    def __init__(
+        self,
+        session_id: str,
+        job_role: str,
+        resume_text: str,
+        llm_service: "LLMService | MockLLMService",
+    ):
+        super().__init__(instructions="")  # LiveKit 기본 LLM 미사용
+        self._llm_service = llm_service
+        self.interview = InterviewSession(
+            session_id=session_id,
+            job_role=job_role,
+            resume_text=resume_text,
+            system_prompt=llm_service.build_system_prompt(job_role, resume_text),
+        )
+
+    async def on_enter(self) -> None:
+        """Room 입장 직후 첫 질문을 송출."""
+        # STT 가 사용자 발화를 텍스트로 확정할 때마다 로그에 찍는다.
+        # llm_node 보다 먼저 호출되므로 "인식이 제대로 되었나" 를 가장 빨리 확인할 수 있다.
+        @self.session.on("user_input_transcribed")
+        def _on_user_transcribed(ev):
+            if getattr(ev, "is_final", True):
+                logger.info("[STT 확정] %s", getattr(ev, "transcript", ""))
+            else:
+                logger.debug("[STT 중간] %s", getattr(ev, "transcript", ""))
+
+        try:
+            result = await self._llm_service.generate_first_question(self.interview)
+        except Exception as e:
+            logger.exception("첫 질문 생성 실패: %s", e)
+            await self.session.say(
+                "죄송합니다, 면접 준비에 문제가 있습니다. 잠시 후 다시 시도해 주세요."
+            )
+            return
+
+        logger.info("[첫 질문] %s", result["question"])
+        await self.session.say(result["question"])
+
+    async def llm_node(
+        self,
+        chat_ctx: llm_types.ChatContext,
+        tools: list[Any],
+        model_settings: Any,
+    ) -> AsyncIterable[str]:
+        """
+        기본 LLM 노드 오버라이드.
+        사용자 답변이 끝날 때마다 호출된다.
+
+        기본 동작: "새 주제 질문" 생성 (중복 주제 자동 회피).
+        판단 AI 가 "꼬리질문이 필요하다" 고 결정하면 그때만 follow-up 으로 분기.
+        현재는 판단 AI 가 없어 항상 새 주제로 진행한다.
+
+        TODO: 판단 AI(FollowUpJudge) 가 추가되면 여기서 FOLLOW_UP 분기.
+        """
+        user_answer = _extract_last_user_text(chat_ctx)
+        logger.info("[답변 수신] %s", user_answer)
+
+        if not user_answer.strip():
+            yield "답변이 제대로 들리지 않았습니다. 다시 말씀해 주시겠어요?"
+            return
+
+        try:
+            result = await self._llm_service.generate_next_topic(self.interview, user_answer)
+        except Exception as e:
+            logger.exception("다음 질문 생성 실패: %s", e)
+            yield "죄송합니다, 잠시 문제가 생겼습니다. 다음 질문으로 넘어가겠습니다."
+            return
+
+        logger.info("[다음 질문] %s", result["question"])
+        yield result["question"]
+
+
+def _extract_last_user_text(chat_ctx: llm_types.ChatContext) -> str:
+    """ChatContext 에서 가장 최근 user 메시지의 텍스트를 반환."""
+    for item in reversed(chat_ctx.items):
+        if getattr(item, "role", None) == "user":
+            return item.text_content or ""
+    return ""
+
+
+# ─────────────────────────────────────────────────────────
+# Worker 정의
+# ─────────────────────────────────────────────────────────
+
+server = AgentServer()
+
+
+def prewarm(proc: JobProcess) -> None:
+    """워커 프로세스 시작 시 한 번만 로드되는 무거운 리소스."""
+    proc.userdata["vad"] = silero.VAD.load()
+
+
+server.setup_fnc = prewarm
+
+
+@server.rtc_session()
+async def entrypoint(ctx: JobContext) -> None:
+    """Room 이 배정될 때마다 호출되는 진입점."""
+    metadata = _load_metadata(ctx)
+    session_id = metadata["sessionId"]
+    job_role = metadata.get("jobRole", "BACKEND")
+    resume_text = metadata.get("resumeText", "")
+
+    ctx.log_context_fields = {
+        "room": ctx.room.name,
+        "session_id": session_id,
+    }
+    logger.info(
+        "[entrypoint] room=%s session=%s job_role=%s resume_len=%d cover_len=%d",
+        ctx.room.name,
+        session_id,
+        job_role,
+        len(resume_text),
+        len(metadata.get("coverLetterText", "")),
+    )
+
+    llm_service = create_llm_service()
+
+    session = AgentSession(
+        stt=inference.STT("deepgram/nova-3", language="ko"),
+        tts=inference.TTS(
+            "elevenlabs/eleven_flash_v2_5",
+            voice=os.getenv("TTS_VOICE", "Xb7hH8MSUJpSbSDYk0k2"),  # Alice (polite female)
+            language="ko",
+        ),
+        vad=ctx.proc.userdata["vad"],
+        # 자동 턴 종료 비활성화.
+        # 면접은 사용자가 생각하느라 침묵하는 경우가 잦아 VAD/턴감지 기반 자동
+        # 종료가 오히려 방해된다. 턴 전환은 프론트 버튼 또는 1분30초 타이머 같은
+        # 외부 트리거로만 수행한다.
+        # STT 자체는 계속 돌아가므로 사용자 발화는 실시간으로 수집된다.
+        turn_handling=TurnHandlingOptions(
+            endpointing={"min_delay": 3600.0, "max_delay": 3600.0},
+        ),
+    )
+
+    agent = InterviewerAgent(
+        session_id=session_id,
+        job_role=job_role,
+        resume_text=resume_text,
+        llm_service=llm_service,
+    )
+
+    await session.start(
+        agent=agent,
+        room=ctx.room,
+        room_input_options=RoomInputOptions(),
+        room_output_options=RoomOutputOptions(),
+    )
+
+
+if __name__ == "__main__":
+    cli.run_app(server)
