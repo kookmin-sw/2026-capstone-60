@@ -5,29 +5,38 @@ import com.capstone.interview.dto.SessionCreateResponse;
 import com.capstone.interview.dto.SessionEndResponse;
 import com.capstone.interview.entity.CoverLetter;
 import com.capstone.interview.entity.Interview;
+import com.capstone.interview.entity.InterviewQna;
 import com.capstone.interview.entity.Member;
 import com.capstone.interview.entity.Resume;
 import com.capstone.interview.exception.UnauthorizedException;
 import com.capstone.interview.repository.CoverLetterRepository;
+import com.capstone.interview.repository.InterviewQnaRepository;
 import com.capstone.interview.repository.InterviewRepository;
 import com.capstone.interview.repository.MemberRepository;
 import com.capstone.interview.repository.ResumeRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class InterviewService {
 
+    private static final int ANSWER_TIME_LIMIT_SECONDS = 90;
+
     private final InterviewRepository interviewRepository;
+    private final InterviewQnaRepository interviewQnaRepository;
     private final MemberRepository memberRepository;
     private final ResumeRepository resumeRepository;
     private final CoverLetterRepository coverLetterRepository;
     private final LiveKitService liveKitService;
+    private final AgentDispatchService agentDispatchService;
 
     @Transactional
     public SessionCreateResponse createSession(SessionCreateRequest request) {
@@ -52,6 +61,8 @@ public class InterviewService {
                 .orElseThrow(() -> new UnauthorizedException("인증된 사용자를 찾을 수 없습니다."));
 
         String sessionId = "sess-" + UUID.randomUUID();
+        String roomName = liveKitService.generateRoomName();
+        int totalDurationSeconds = request.durationMinutes() * 60;
 
         Interview interview = Interview.builder()
                 .member(member)
@@ -59,19 +70,48 @@ public class InterviewService {
                 .coverLetter(coverLetter)
                 .category(request.jobField())
                 .sessionId(sessionId)
+                .roomName(roomName)
+                .durationMinutes(request.durationMinutes())
                 .build();
 
         interview.start();
         interviewRepository.save(interview);
 
-        String roomName = liveKitService.generateRoomName();
-        String token = liveKitService.generateToken(roomName, "user-" + interview.getId());
+        // Agent Dispatch
+        String resumeText = resume != null ? resume.getOriginalText() : "";
+        String coverLetterText = coverLetter != null ? coverLetter.getOriginalText() : "";
+
+        try {
+            agentDispatchService.dispatch(
+                    roomName, sessionId, request.jobField(),
+                    resumeText, coverLetterText,
+                    totalDurationSeconds, ANSWER_TIME_LIMIT_SECONDS
+            );
+        } catch (Exception e) {
+            log.error("[세션 생성] Agent dispatch 실패, 세션을 FAILED 처리합니다. sessionId={}", sessionId, e);
+            interview.fail();
+            throw new RuntimeException("Agent dispatch에 실패했습니다. 잠시 후 다시 시도해주세요.");
+        }
+
+        // 첫 턴 초기화 (turnNumber=1)
+        LocalDateTime now = LocalDateTime.now();
+        InterviewQna firstTurn = InterviewQna.builder()
+                .interview(interview)
+                .sequenceNumber(1)
+                .startedAt(now)
+                .expiresAt(now.plusSeconds(ANSWER_TIME_LIMIT_SECONDS))
+                .build();
+        interviewQnaRepository.save(firstTurn);
+
+        String token = liveKitService.generateToken(roomName, "user-" + member.getId());
 
         return new SessionCreateResponse(
                 true,
                 new SessionCreateResponse.Data(
                         sessionId,
-                        new SessionCreateResponse.LiveKitInfo(roomName, liveKitService.getUrl(), token)
+                        new SessionCreateResponse.LiveKitInfo(roomName, liveKitService.getUrl(), token),
+                        ANSWER_TIME_LIMIT_SECONDS,
+                        totalDurationSeconds
                 )
         );
     }

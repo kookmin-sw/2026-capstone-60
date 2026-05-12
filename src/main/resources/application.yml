@@ -16,6 +16,7 @@ livekit:
   url: ${LIVEKIT_URL}
   api-key: ${LIVEKIT_API_KEY}
   api-secret: ${LIVEKIT_API_SECRET}
+  agent-name: ${LIVEKIT_AGENT_NAME:interviewer-agent}
 
 jwt:
   secret: ${JWT_SECRET}
