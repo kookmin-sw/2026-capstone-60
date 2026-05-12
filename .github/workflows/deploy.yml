@@ -1,15 +1,23 @@
-name: Deploy to AWS S3
+name: Deploy to GitHub Pages
 
 on:
   push:
     branches:
       - main
 
-jobs:
-  deploy:
-    name: Build & Deploy
-    runs-on: ubuntu-latest
+permissions:
+  contents: read
+  pages: write
+  id-token: write
 
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -29,22 +37,19 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ secrets.AWS_REGION }}
+          path: dist
 
-      - name: Deploy to S3
-        run: |
-          # HTML 파일: 캐시 금지 (항상 최신 버전 제공)
-          aws s3 sync dist/ s3://${{ secrets.AWS_S3_BUCKET }} \
-            --delete \
-            --exclude "assets/*" \
-            --cache-control "no-cache, no-store, must-revalidate"
-
-          # JS/CSS 등 해시 포함 정적 에셋: 장기 캐시 허용
-          aws s3 sync dist/assets/ s3://${{ secrets.AWS_S3_BUCKET }}/assets/ \
-            --delete \
-            --cache-control "public, max-age=31536000, immutable"
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
