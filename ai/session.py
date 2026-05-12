@@ -25,7 +25,9 @@ class InterviewSession:
     job_role: str
     resume_text: str
     system_prompt: str
+    cover_letter_text: str = ""
     history: list[ConversationTurn] = field(default_factory=list)
+    current_answer_buffer: str = ""
 
     def add_question(self, question: str, is_follow_up: bool = False, intent: str = "") -> None:
         """새 질문을 기록한다."""
@@ -39,6 +41,20 @@ class InterviewSession:
         """마지막 질문에 대한 답변을 기록한다."""
         if self.history:
             self.history[-1].answer = answer
+
+    def append_to_buffer(self, text: str) -> None:
+        """STT 확정 텍스트를 답변 버퍼에 누적한다."""
+        if text:
+            if self.current_answer_buffer:
+                self.current_answer_buffer += " " + text
+            else:
+                self.current_answer_buffer = text
+
+    def flush_buffer(self) -> str:
+        """버퍼 내용을 반환하고 초기화한다. add_answer 호출은 caller 책임."""
+        answer = self.current_answer_buffer
+        self.current_answer_buffer = ""
+        return answer
 
     def get_bedrock_messages(self) -> list[dict]:
         """Bedrock Converse API 에 넘길 messages 리스트."""
