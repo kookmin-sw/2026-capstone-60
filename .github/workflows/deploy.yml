@@ -27,8 +27,6 @@ jobs:
         run: npm test
 
       - name: Build
-        env:
-          VITE_BACKEND_BASE_URL: ${{ secrets.VITE_BACKEND_BASE_URL }}
         run: npm run build
 
       - name: Configure AWS credentials
