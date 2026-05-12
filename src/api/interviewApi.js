@@ -31,6 +31,16 @@ export function createInterviewSession(data) {
   });
 }
 
+export function nextQuestion(sessionId, currentTurnNumber) {
+  if (USE_MOCK_SESSION) {
+    return nextMockQuestion(sessionId, currentTurnNumber);
+  }
+  return request(`/sessions/${sessionId}/next`, {
+    method: "POST",
+    body: JSON.stringify({ currentTurnNumber }),
+  });
+}
+
 export function endInterviewSession(sessionId, reason) {
   if (USE_MOCK_SESSION) {
     return endMockSession(sessionId, reason);
@@ -118,6 +128,8 @@ async function createMockSession(data) {
         accessToken: "mock-livekit-token",
         isMock: true,
       },
+      answerTimeLimitSeconds: 90,
+      totalDurationSeconds: (data.durationMinutes || 15) * 60,
     },
   };
 }
@@ -132,6 +144,21 @@ async function endMockSession(sessionId, reason) {
     success: true,
     message: "면접이 종료되었습니다. AI 피드백을 생성 중입니다.",
     data: { status: "EVALUATING" },
+  };
+}
+
+async function nextMockQuestion(sessionId, currentTurnNumber) {
+  await delay(300);
+  const nextTurn = currentTurnNumber + 1;
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 90 * 1000).toISOString();
+  return {
+    success: true,
+    data: {
+      turnNumber: nextTurn,
+      startedAt: now.toISOString(),
+      expiresAt,
+    },
   };
 }
 

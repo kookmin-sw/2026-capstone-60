@@ -22,6 +22,7 @@ import {
   endInterviewSession,
   getInterviewResult,
   isMockMode,
+  nextQuestion,
 } from "./api/interviewApi";
 
 const ROUTE = {
@@ -123,6 +124,8 @@ export default function App() {
         jobField: payload.jobField,
         durationMinutes: payload.durationMinutes,
         livekit: data.livekit,
+        answerTimeLimitSeconds: data.answerTimeLimitSeconds || 90,
+        totalDurationSeconds: data.totalDurationSeconds || payload.durationMinutes * 60,
       });
       navigate(ROUTE.ROOM);
     } catch (sessionError) {
