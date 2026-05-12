@@ -20,6 +20,7 @@ AI 모의면접 LiveKit Agent.
     python agent.py start      # 프로덕션 워커
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -43,6 +44,7 @@ from livekit.agents import (
 from livekit.plugins import silero
 
 from ai.llm_service import LLMService, MockLLMService, create_llm_service
+from ai.qna_client import save_qna
 from ai.session import InterviewSession
 
 load_dotenv()
@@ -171,14 +173,42 @@ class InterviewerAgent(Agent):
         logger.info("[첫 질문] %s", result["question"])
         await self.session.say(result["question"])
 
+        # 첫 질문도 QUESTION publish (§5.4: TTS 재생 완료 후)
+        await self._publish_question(result, is_follow_up=False)
+
+    async def _publish_question(self, result: dict, is_follow_up: bool) -> None:
+        """QUESTION Data Message를 Room에 publish한다 (§5.4).
+
+        TTS say()가 재생 완료까지 await하므로, 이 메서드는 say() 이후에 호출된다.
+        publish 실패는 치명적이지 않으므로 try/except로 감싸고 로그만 남긴다.
+        """
+        try:
+            payload = {
+                "type": "QUESTION",
+                "payload": {
+                    "turnNumber": len(self.interview.history),
+                    "text": result["question"],
+                    "intent": result.get("intent", ""),
+                    "isFollowUp": is_follow_up,
+                },
+            }
+            await self.session.room.local_participant.publish_data(
+                payload=json.dumps(payload).encode("utf-8"),
+                reliable=True,
+                topic="interview",
+            )
+            logger.info("[QUESTION publish] turn=%d", len(self.interview.history))
+        except Exception as e:
+            logger.warning("[QUESTION publish 실패] %s — 음성은 이미 전달됨, 면접 계속", e)
+
     async def _handle_next(self, payload: dict) -> None:
-        """NEXT 수신: ① STT 버퍼 flush → ② (향후) QnA 저장 → ③ 다음 질문 생성·발화.
+        """NEXT 수신: ① STT 버퍼 flush → ② QnA 저장 (fire-and-forget) → ③ 다음 질문 생성·발화 → ④ QUESTION publish.
 
         §5.3 처리 순서:
         1. STT 버퍼에 누적된 텍스트를 직전 턴에 기록
-        2. 직전 턴의 Q+A를 Backend로 저장 (작업 2에서 구현)
+        2. 직전 턴의 Q+A를 Backend로 저장 (fire-and-forget)
         3. 다음 질문 생성
-        4. TTS 발화 → 재생 완료 후 QUESTION 메시지 publish (작업 2에서 구현)
+        4. TTS 발화 → 재생 완료 후 QUESTION 메시지 publish
         """
         turn_number = payload.get("turnNumber", 0)
         logger.info("[NEXT 수신] turnNumber=%d", turn_number)
@@ -188,7 +218,18 @@ class InterviewerAgent(Agent):
         self.interview.add_answer(answer)
         logger.info("[답변 확정] turn=%d answer_len=%d", turn_number - 1, len(answer))
 
-        # ② QnA 저장 (TODO: 작업 2에서 fire-and-forget 백그라운드 태스크로 구현)
+        # ② QnA 저장 — fire-and-forget (§5.5)
+        prev_turn = self.interview.history[-1] if self.interview.history else None
+        if prev_turn:
+            prev_turn_number = len(self.interview.history)
+            asyncio.create_task(save_qna(
+                session_id=self.interview.session_id,
+                turn_number=prev_turn_number,
+                question=prev_turn.question,
+                intent=prev_turn.intent,
+                is_follow_up=prev_turn.is_follow_up,
+                answer=prev_turn.answer,
+            ))
 
         # ③ 다음 질문 생성·발화
         try:
@@ -203,14 +244,15 @@ class InterviewerAgent(Agent):
         logger.info("[다음 질문] turn=%d question=%s", turn_number, result["question"])
         await self.session.say(result["question"])
 
-        # ④ QUESTION publish (TODO: 작업 2에서 TTS 완료 후 publish 구현)
+        # ④ QUESTION publish — TTS say()가 재생 완료까지 기다리므로 여기서 publish (§5.4)
+        await self._publish_question(result, is_follow_up=False)
 
     async def _handle_end(self, payload: dict) -> None:
-        """END 수신: ① STT 버퍼 flush → ② (향후) 마지막 턴 저장 (await) → ③ shutdown.
+        """END 수신: ① STT 버퍼 flush → ② 마지막 턴 저장 (await) → ③ shutdown.
 
         §5.3 처리 순서:
         1. STT 버퍼 내용을 마지막 턴에 기록
-        2. 마지막 턴 저장 — await로 기다림 (작업 2에서 구현)
+        2. 마지막 턴 저장 — await로 기다림 (프로세스 종료 전 반드시 완료)
         3. session.shutdown()
         """
         reason = payload.get("reason", "UNKNOWN")
@@ -221,7 +263,18 @@ class InterviewerAgent(Agent):
         self.interview.add_answer(answer)
         logger.info("[마지막 답변 확정] answer_len=%d", len(answer))
 
-        # ② 마지막 턴 QnA 저장 (TODO: 작업 2에서 await로 구현)
+        # ② 마지막 턴 QnA 저장 — await (§5.5: END 경로는 동기로 기다림)
+        last_turn = self.interview.history[-1] if self.interview.history else None
+        if last_turn:
+            last_turn_number = len(self.interview.history)
+            await save_qna(
+                session_id=self.interview.session_id,
+                turn_number=last_turn_number,
+                question=last_turn.question,
+                intent=last_turn.intent,
+                is_follow_up=last_turn.is_follow_up,
+                answer=last_turn.answer,
+            )
 
         # ③ shutdown
         logger.info("[면접 종료] session=%s total_turns=%d",
