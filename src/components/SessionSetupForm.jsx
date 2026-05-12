@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from "react";
+import { uploadPdfResume } from "../api/resumeApi";
 
 const JOB_FIELDS = [
   { value: "BACKEND",  label: "백엔드" },
@@ -87,21 +88,38 @@ export default function SessionSetupForm({ onSubmit, isSubmitting }) {
   const coverDocs  = documents.filter((d) => d.type === "COVER_LETTER");
 
   /* ── Document helpers ─────────────────────── */
-  const uploadDocument = () => {
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+
+  const uploadDocument = async () => {
     if (!uploadFile) return;
-    setDocuments((prev) => [
-      {
-        id: Date.now(),
-        type: uploadType,
-        name: customTitle.trim() || uploadFile.name,
-        fileName: uploadFile.name,
-        size: uploadFile.size || 0,
-        uploadedAt: new Date().toISOString(),
-      },
-      ...prev,
-    ]);
-    setUploadFile(null);
-    setCustomTitle("");
+    setUploading(true);
+    setUploadError("");
+
+    const title = customTitle.trim() || uploadFile.name;
+
+    try {
+      // 백엔드에 PDF 업로드 → 파싱 → DB 저장
+      const result = await uploadPdfResume(uploadFile, title);
+
+      setDocuments((prev) => [
+        {
+          id: result.id,  // 백엔드에서 반환한 실제 DB ID
+          type: uploadType,
+          name: title,
+          fileName: uploadFile.name,
+          size: uploadFile.size || 0,
+          uploadedAt: result.createdAt || new Date().toISOString(),
+        },
+        ...prev,
+      ]);
+      setUploadFile(null);
+      setCustomTitle("");
+    } catch (err) {
+      setUploadError(err.message || "업로드에 실패했습니다.");
+    } finally {
+      setUploading(false);
+    }
   };
 
   /* ── Mic helpers ──────────────────────────── */
@@ -161,8 +179,8 @@ export default function SessionSetupForm({ onSubmit, isSubmitting }) {
 
   const handleSubmit = () => {
     onSubmit({
-      resumeIds: null,
-      coverLetter: null,
+      resumeIds: selectedResumeId ? Number(selectedResumeId) : null,
+      coverLetter: selectedCoverId ? Number(selectedCoverId) : null,
       jobField,
       durationMinutes: Number(durationMinutes),
     });
@@ -203,10 +221,11 @@ export default function SessionSetupForm({ onSubmit, isSubmitting }) {
             accept=".pdf,.doc,.docx,.txt"
             onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
           />
-          <button className="ghost-btn" type="button" onClick={uploadDocument} disabled={!uploadFile}>
-            추가
+          <button className="ghost-btn" type="button" onClick={uploadDocument} disabled={!uploadFile || uploading}>
+            {uploading ? "업로드 중..." : "추가"}
           </button>
         </div>
+        {uploadError && <p className="subtext" style={{ color: "red" }}>{uploadError}</p>}
       </div>
 
       {documents.length > 0 && (
