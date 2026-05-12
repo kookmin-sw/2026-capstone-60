@@ -1,15 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Room, RoomEvent } from "livekit-client";
 import useCountdown from "../hooks/useCountdown";
+import { nextQuestion } from "../api/interviewApi";
 
-const ANSWER_TIME_LIMIT = 90;
 const WARNING_THRESHOLD = 10;
-const QUESTION_BANK = [
-  "최근 프로젝트에서 가장 어려웠던 기술 의사결정 사례를 설명해주세요.",
-  "왜 해당 구조를 선택했는지, 대안과의 트레이드오프를 함께 말해주세요.",
-  "장애가 발생했던 경험이 있다면 원인 분석과 재발 방지 방안을 설명해주세요.",
-  "성능 최적화를 위해 직접 측정했던 지표와 개선 결과를 설명해주세요.",
-];
+const AGENT_TIMEOUT_MS = 15000;
 
 export default function InterviewRoom({
   session,
@@ -20,67 +15,78 @@ export default function InterviewRoom({
   const [isConnected, setIsConnected] = useState(false);
   const [isMicOn, setIsMicOn] = useState(true);
   const [connectionError, setConnectionError] = useState("");
-  const [turnExpired, setTurnExpired] = useState(false);
   const [warningVisible, setWarningVisible] = useState(false);
   const [turn, setTurn] = useState(1);
+  const [currentQuestion, setCurrentQuestion] = useState("");
+  const [waitingForAgent, setWaitingForAgent] = useState(true);
+  const [agentTimedOut, setAgentTimedOut] = useState(false);
+  const [nextLoading, setNextLoading] = useState(false);
   const [logs, setLogs] = useState([]);
 
+  const answerTimeLimitSeconds = session.answerTimeLimitSeconds || 90;
+  const totalDurationSeconds = session.totalDurationSeconds || session.durationMinutes * 60;
+
+  // 답변 타이머 만료 시 자동으로 /next 호출
+  const handleAnswerTimerExpire = useCallback(async () => {
+    if (ending || nextLoading) return;
+    addLog("SYSTEM", `Q${turn} 답변 시간이 종료되었습니다. 다음 질문을 요청합니다.`);
+    await requestNextQuestion();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turn, ending, nextLoading]);
+
   const interviewTimer = useCountdown(
-    session.durationMinutes * 60,
-    Boolean(session) && !ending,
+    totalDurationSeconds,
+    isConnected && !ending && !waitingForAgent,
     useCallback(() => {
       onSessionEnd("TIME_OVER");
     }, [onSessionEnd])
   );
 
   const answerTimer = useCountdown(
-    ANSWER_TIME_LIMIT,
-    Boolean(session) && !ending,
-    useCallback(() => {
-      setTurnExpired(true);
-      setLogs((prev) => [
-        {
-          id: `${Date.now()}-timeout`,
-          type: "SYSTEM",
-          text: `Q${turn} 답변 시간이 종료되어 다음 질문 준비 상태로 전환됐습니다.`,
-        },
-        ...prev,
-      ]);
-    }, [turn])
+    answerTimeLimitSeconds,
+    isConnected && !ending && !waitingForAgent && currentQuestion !== "",
+    handleAnswerTimerExpire
   );
 
-  const canAskNextQuestion = interviewTimer.secondsLeft > ANSWER_TIME_LIMIT;
-  const currentQuestion = useMemo(
-    () => QUESTION_BANK[(turn - 1) % QUESTION_BANK.length],
-    [turn]
-  );
+  const canAskNextQuestion = interviewTimer.secondsLeft > answerTimeLimitSeconds;
 
+  // 10초 전 경고
   useEffect(() => {
-    if (answerTimer.secondsLeft === WARNING_THRESHOLD) {
+    if (answerTimer.secondsLeft === WARNING_THRESHOLD && answerTimer.secondsLeft > 0) {
       setWarningVisible(true);
-      setLogs((prev) => [
-        {
-          id: `${Date.now()}-warning`,
-          type: "ALERT",
-          text: "10초 후 답변이 종료됩니다.",
-        },
-        ...prev,
-      ]);
+      addLog("ALERT", "10초 후 답변이 종료됩니다.");
     }
     if (answerTimer.secondsLeft > WARNING_THRESHOLD) {
       setWarningVisible(false);
     }
   }, [answerTimer.secondsLeft]);
 
-  useEffect(() => {
-    if (turnExpired && !canAskNextQuestion) {
-      onSessionEnd("TIME_OVER");
+  // Agent QUESTION 메시지 수신 핸들러
+  const handleDataReceived = useCallback((payload, participant, kind, topic) => {
+    try {
+      const msg = JSON.parse(new TextDecoder().decode(payload));
+      if (msg.type === "QUESTION") {
+        const { turnNumber, text } = msg.payload;
+        setTurn(turnNumber);
+        setCurrentQuestion(text);
+        setWaitingForAgent(false);
+        setWarningVisible(false);
+        answerTimer.reset(answerTimeLimitSeconds);
+        addLog("QUESTION", `Q${turnNumber}. ${text}`);
+      }
+    } catch (e) {
+      // 파싱 실패 시 무시
     }
-  }, [turnExpired, canAskNextQuestion, onSessionEnd]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answerTimeLimitSeconds]);
 
+  // LiveKit Room 연결
   useEffect(() => {
     if (session.livekit?.isMock) {
       setIsConnected(true);
+      // Mock 모드에서는 Agent 대기 없이 바로 시작
+      setWaitingForAgent(false);
+      setCurrentQuestion("최근 프로젝트에서 가장 어려웠던 기술 의사결정 사례를 설명해주세요.");
       return undefined;
     }
 
@@ -101,12 +107,90 @@ export default function InterviewRoom({
       setIsConnected(false);
     });
 
-    connectRoom();
+    // Agent QUESTION 메시지 수신
+    room.on(RoomEvent.DataReceived, handleDataReceived);
+
+    // Agent 참가자 감지 → 대기 해제
+    room.on(RoomEvent.ParticipantConnected, (participant) => {
+      // Agent가 접속하면 대기 상태 해제 (첫 QUESTION 메시지를 기다림)
+      addLog("SYSTEM", "AI 면접관이 접속했습니다. 첫 질문을 준비 중입니다.");
+    });
+
+    // 이미 Room에 있는 참가자 확인
+    const checkExistingParticipants = () => {
+      if (room.remoteParticipants.size > 0) {
+        addLog("SYSTEM", "AI 면접관이 이미 접속해 있습니다.");
+      }
+    };
+
+    connectRoom().then(checkExistingParticipants);
 
     return () => {
+      room.off(RoomEvent.DataReceived, handleDataReceived);
       room.disconnect();
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.livekit.accessToken, session.livekit.url]);
+
+  // Agent 접속 타임아웃 (15초)
+  useEffect(() => {
+    if (!isConnected || !waitingForAgent || session.livekit?.isMock) return undefined;
+
+    const timeout = setTimeout(() => {
+      if (waitingForAgent) {
+        setAgentTimedOut(true);
+        setConnectionError(
+          "AI 면접관이 응답하지 않습니다. 잠시 후 다시 시도해주세요."
+        );
+        addLog("SYSTEM", "Agent 접속 타임아웃 — 면접을 시작할 수 없습니다.");
+      }
+    }, AGENT_TIMEOUT_MS);
+
+    return () => clearTimeout(timeout);
+  }, [isConnected, waitingForAgent, session.livekit?.isMock]);
+
+  // "다음 질문" 버튼 → POST /next
+  const requestNextQuestion = async () => {
+    if (!canAskNextQuestion || nextLoading || ending) return;
+    try {
+      setNextLoading(true);
+      const response = await nextQuestion(session.sessionId, turn);
+      const data = response.data;
+
+      // expiresAt 기반 카운트다운 리셋
+      if (data.expiresAt) {
+        const remaining = Math.max(
+          1,
+          Math.round((new Date(data.expiresAt).getTime() - Date.now()) / 1000)
+        );
+        answerTimer.reset(remaining);
+      } else {
+        answerTimer.reset(answerTimeLimitSeconds);
+      }
+
+      setWarningVisible(false);
+      // 실제 질문 텍스트는 Agent의 QUESTION DataMessage로 수신됨
+      // Mock 모드에서는 직접 턴 업데이트
+      if (session.livekit?.isMock) {
+        setTurn(data.turnNumber);
+        setCurrentQuestion(`Mock 질문 ${data.turnNumber}: 다음 질문입니다.`);
+      }
+
+      addLog("SYSTEM", `다음 질문을 요청했습니다. (턴 ${data.turnNumber})`);
+    } catch (err) {
+      addLog("SYSTEM", `다음 질문 요청 실패: ${err.message}`);
+    } finally {
+      setNextLoading(false);
+    }
+  };
+
+  // 전체 타이머 만료 시 남은 답변 시간이 부족하면 종료
+  useEffect(() => {
+    if (!canAskNextQuestion && answerTimer.secondsLeft === 0 && !ending) {
+      onSessionEnd("TIME_OVER");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canAskNextQuestion, answerTimer.secondsLeft, ending]);
 
   const toggleMic = async () => {
     if (session.livekit?.isMock) {
@@ -119,25 +203,53 @@ export default function InterviewRoom({
     setIsMicOn(next);
   };
 
-  const nextAnswerTurn = () => {
-    if (!canAskNextQuestion) return;
-    setTurnExpired(false);
-    setWarningVisible(false);
-    setTurn((prev) => prev + 1);
-    setLogs((prev) => [
-      {
-        id: `${Date.now()}-next`,
-        type: "QUESTION",
-        text: `다음 질문으로 이동했습니다. (Q${turn + 1})`,
-      },
-      ...prev,
-    ]);
-    answerTimer.reset(ANSWER_TIME_LIMIT);
-  };
-
   const endInterview = async () => {
     await onSessionEnd("USER_STOP");
   };
+
+  function addLog(type, text) {
+    setLogs((prev) => [
+      { id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type, text },
+      ...prev,
+    ]);
+  }
+
+  // Agent 대기 화면
+  if (waitingForAgent && !session.livekit?.isMock) {
+    return (
+      <section className="card">
+        <div className="header-row">
+          <div>
+            <p className="eyebrow">Session</p>
+            <h2>AI 면접관 대기 중</h2>
+          </div>
+          <span className={`chip ${isConnected ? "success" : "warn"}`}>
+            {isConnected ? "LiveKit 연결됨" : "연결 확인 중"}
+          </span>
+        </div>
+
+        {agentTimedOut ? (
+          <div className="error">
+            {connectionError}
+            <br />
+            <button className="ghost-btn" type="button" onClick={() => window.location.reload()}>
+              새로고침
+            </button>
+          </div>
+        ) : (
+          <div className="spinner-wrap">
+            <div className="spinner" />
+            <span>AI 면접관이 접속할 때까지 기다리고 있습니다...</span>
+          </div>
+        )}
+
+        <div className="room-meta">
+          <p><strong>Session ID</strong> {session.sessionId}</p>
+          <p><strong>Room</strong> {session.livekit.roomName}</p>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <div className="layout-two-col">
@@ -153,12 +265,8 @@ export default function InterviewRoom({
         </div>
 
         <div className="room-meta">
-          <p>
-            <strong>Session ID</strong> {session.sessionId}
-          </p>
-          <p>
-            <strong>Room</strong> {session.livekit.roomName}
-          </p>
+          <p><strong>Session ID</strong> {session.sessionId}</p>
+          <p><strong>Room</strong> {session.livekit.roomName}</p>
         </div>
 
         <div className="timer-grid">
@@ -167,14 +275,18 @@ export default function InterviewRoom({
             <strong>{interviewTimer.formatted}</strong>
           </div>
           <div className={`timer-box ${answerTimer.secondsLeft <= 15 ? "danger" : ""}`}>
-            <span>답변 남은 시간 (1:30)</span>
+            <span>답변 남은 시간 ({Math.floor(answerTimeLimitSeconds / 60)}:{String(answerTimeLimitSeconds % 60).padStart(2, "0")})</span>
             <strong>{answerTimer.formatted}</strong>
           </div>
         </div>
 
         <div className="question-box">
           <p className="eyebrow">Current Question</p>
-          <h3>Q{turn}. {currentQuestion}</h3>
+          {currentQuestion ? (
+            <h3>Q{turn}. {currentQuestion}</h3>
+          ) : (
+            <h3 className="subtext">질문을 기다리는 중...</h3>
+          )}
           <p className="subtext compact">
             답변이 충분하면 일반 질문, 부족하면 꼬리 질문으로 이어질 수 있습니다.
           </p>
@@ -183,12 +295,6 @@ export default function InterviewRoom({
         {warningVisible && (
           <div className="notice warn">
             10초 후 답변이 종료됩니다. 핵심 결론을 먼저 말해주세요.
-          </div>
-        )}
-
-        {turnExpired && (
-          <div className="notice">
-            90초가 지났습니다. {canAskNextQuestion ? "다음 질문으로 넘어가세요." : "남은 전체 시간이 짧아 다음 질문은 생성되지 않고 면접이 종료됩니다."}
           </div>
         )}
 
@@ -201,10 +307,10 @@ export default function InterviewRoom({
           <button
             className="ghost-btn"
             type="button"
-            onClick={nextAnswerTurn}
-            disabled={!canAskNextQuestion}
+            onClick={requestNextQuestion}
+            disabled={!canAskNextQuestion || nextLoading || ending}
           >
-            다음 질문 시작 (타이머 리셋)
+            {nextLoading ? "요청 중..." : "다음 질문"}
           </button>
           <button className="danger-btn" type="button" onClick={endInterview} disabled={ending}>
             {ending ? "종료 처리 중..." : "면접 종료"}
@@ -216,14 +322,14 @@ export default function InterviewRoom({
         <h3>진행 상태</h3>
         <ul className="status-list">
           <li>현재 턴: {turn}번</li>
-          <li>답변 제한: 1분 30초</li>
+          <li>답변 제한: {Math.floor(answerTimeLimitSeconds / 60)}분 {answerTimeLimitSeconds % 60}초</li>
           <li>10초 전 종료 알림 활성화</li>
           <li>세션 종료 후 자동 평가 진행</li>
         </ul>
         <div className="event-log">
           <strong>실시간 로그</strong>
           {logs.length === 0 && <p className="subtext compact">아직 이벤트가 없습니다.</p>}
-          {logs.slice(0, 4).map((log) => (
+          {logs.slice(0, 6).map((log) => (
             <p key={log.id}>
               [{log.type}] {log.text}
             </p>
