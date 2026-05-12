@@ -9,5 +9,6 @@ public record QAPair(
         String answerContent,
         String modelAnswer,
         String individualFeedback,
-        boolean isFollowUp
+        boolean isFollowUp,
+        Integer parentSequenceNumber
 ) {}
