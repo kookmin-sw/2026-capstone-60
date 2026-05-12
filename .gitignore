@@ -68,3 +68,4 @@ out
 !.yarn/versions
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+.vercel
