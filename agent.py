@@ -122,10 +122,7 @@ class InterviewerAgent(Agent):
         )
 
     async def on_enter(self) -> None:
-        """Room 입장 직후: 사용자 참가 대기 → STT 버퍼링 등록 → Data Message 핸들러 등록 → 첫 질문 발화."""
-
-        # ── 사용자 참가 대기 (§9.3: Frontend가 Room 접속 전에 발화하면 첫 질문을 놓침) ──
-        await self.session.wait_for_participant()
+        """Room 입장 직후: STT 버퍼링 등록 → Data Message 핸들러 등록 → 첫 질문 발화."""
 
         # ── STT 버퍼링 (§5.3.1) ──
         # VAD 기반 자동 턴 종료를 끈 상태이므로 STT 결과를 Agent가 직접 모아둔다.
@@ -139,11 +136,14 @@ class InterviewerAgent(Agent):
                 logger.debug("[STT 중간] %s", transcript)
 
         # ── Data Message 핸들러 등록 (§5.3) ──
-        @self.session.room.on("data_received")
-        def _on_data_received(data: bytes, *args, **kwargs):
+        room = self.session.room_io.room
+
+        @room.on("data_received")
+        def _on_data_received(packet, *args, **kwargs):
             """Backend → Agent: NEXT / END 메시지 처리."""
             try:
-                msg = json.loads(data.decode("utf-8"))
+                data = packet.data if hasattr(packet, 'data') else packet
+                msg = json.loads(data.decode("utf-8") if isinstance(data, bytes) else str(data))
             except (json.JSONDecodeError, UnicodeDecodeError) as e:
                 logger.warning("Data Message 파싱 실패: %s", e)
                 return
@@ -192,7 +192,7 @@ class InterviewerAgent(Agent):
                     "isFollowUp": is_follow_up,
                 },
             }
-            await self.session.room.local_participant.publish_data(
+            await self.session.room_io.room.local_participant.publish_data(
                 payload=json.dumps(payload).encode("utf-8"),
                 reliable=True,
                 topic="interview",
@@ -279,7 +279,7 @@ class InterviewerAgent(Agent):
         # ③ shutdown
         logger.info("[면접 종료] session=%s total_turns=%d",
                     self.interview.session_id, len(self.interview.history))
-        await self.session.shutdown()
+        self.session.shutdown()
 
     async def llm_node(
         self,
@@ -386,6 +386,9 @@ async def entrypoint(ctx: JobContext) -> None:
         cover_letter_text=cover_letter_text,
         llm_service=llm_service,
     )
+
+    # 사용자 참가 대기 (§9.3: Frontend가 Room 접속 전에 발화하면 첫 질문을 놓침)
+    await ctx.wait_for_participant()
 
     await session.start(
         agent=agent,
