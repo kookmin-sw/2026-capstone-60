@@ -1,6 +1,7 @@
 package com.capstone.interview.entity;
 
 import jakarta.persistence.*;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -42,6 +43,27 @@ public class Resume {
 
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
+
+    @Builder
+    private Resume(Member member, String title, String originalText, String fileUrl, String keywords) {
+        this.member = member;
+        this.title = title;
+        this.originalText = originalText;
+        this.fileUrl = fileUrl;
+        this.keywords = keywords;
+    }
+
+    public void updateOriginalText(String originalText) {
+        this.originalText = originalText;
+    }
+
+    public void updateFileUrl(String fileUrl) {
+        this.fileUrl = fileUrl;
+    }
+
+    public void updateKeywords(String keywords) {
+        this.keywords = keywords;
+    }
 
     @PrePersist
     protected void onCreate() {
