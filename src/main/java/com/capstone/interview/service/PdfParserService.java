@@ -28,7 +28,7 @@ public class PdfParserService {
      */
     public String extractText(MultipartFile file) throws IOException {
         try (InputStream inputStream = file.getInputStream();
-            PDDocument document = Loader.loadPDF(inputStream) // load를 Loader.loadPDF로!
+            PDDocument document = Loader.loadPDF(inputStream) {// load를 Loader.loadPDF로!
             // PDDocument document = PDDocument.load(inputStream)) {
 
             PDFTextStripper stripper = new PDFTextStripper();
