@@ -21,3 +21,6 @@ livekit:
 jwt:
   secret: ${JWT_SECRET}
   expiration: 3600000  # 1시간 (밀리초). 리프레쉬 토큰 추가시 짧게 바꿔야 함.
+
+internal:
+  service-token: ${INTERNAL_SERVICE_TOKEN:default-dev-token}
