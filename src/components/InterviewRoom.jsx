@@ -4,7 +4,7 @@ import useCountdown from "../hooks/useCountdown";
 import { nextQuestion } from "../api/interviewApi";
 
 const WARNING_THRESHOLD = 10;
-const AGENT_TIMEOUT_MS = 15000;
+const AGENT_TIMEOUT_MS = 60000; // 60초 (TTS 초기화 시간 고려)
 
 export default function InterviewRoom({
   session,
@@ -107,18 +107,34 @@ export default function InterviewRoom({
       setIsConnected(false);
     });
 
+    // Agent 오디오 트랙 자동 재생
+    room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+      if (track.kind === "audio") {
+        const audioEl = track.attach();
+        audioEl.id = `audio-${participant.identity}`;
+        document.body.appendChild(audioEl);
+      }
+    });
+
+    room.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
+      if (track.kind === "audio") {
+        track.detach().forEach((el) => el.remove());
+      }
+    });
+
     // Agent QUESTION 메시지 수신
     room.on(RoomEvent.DataReceived, handleDataReceived);
 
     // Agent 참가자 감지 → 대기 해제
     room.on(RoomEvent.ParticipantConnected, (participant) => {
-      // Agent가 접속하면 대기 상태 해제 (첫 QUESTION 메시지를 기다림)
+      setWaitingForAgent(false);
       addLog("SYSTEM", "AI 면접관이 접속했습니다. 첫 질문을 준비 중입니다.");
     });
 
     // 이미 Room에 있는 참가자 확인
     const checkExistingParticipants = () => {
       if (room.remoteParticipants.size > 0) {
+        setWaitingForAgent(false);
         addLog("SYSTEM", "AI 면접관이 이미 접속해 있습니다.");
       }
     };
@@ -127,6 +143,12 @@ export default function InterviewRoom({
 
     return () => {
       room.off(RoomEvent.DataReceived, handleDataReceived);
+      // Agent 오디오 엘리먼트 정리
+      room.remoteParticipants.forEach((p) => {
+        p.audioTrackPublications.forEach((pub) => {
+          if (pub.track) pub.track.detach().forEach((el) => el.remove());
+        });
+      });
       room.disconnect();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
