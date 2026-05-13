@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import { uploadPdfResume } from "../api/resumeApi";
+import { getMyResumes } from "../api/resumeApi";
 
 const JOB_FIELDS = [
   { value: "BACKEND",  label: "백엔드" },
@@ -13,15 +13,8 @@ const JOB_FIELDS = [
 
 const DURATION_OPTIONS = [10, 15, 20, 30, 45, 60];
 
-const DOC_STORAGE_KEY = "interviewDocuments";
-
-function formatSize(bytes) {
-  if (!bytes) return "0 KB";
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-}
-
 const STEPS = [
-  { id: 1, label: "문서 업로드",   skippable: true },
+  { id: 1, label: "이력서 선택",   skippable: true },
   { id: 2, label: "면접 설정",     skippable: false },
   { id: 3, label: "마이크 테스트", skippable: true },
   { id: 4, label: "시작 확인",     skippable: false },
@@ -31,12 +24,10 @@ export default function SessionSetupForm({ onSubmit, isSubmitting }) {
   const [step, setStep] = useState(1);
 
   /* ── Documents ────────────────────────────── */
-  const [documents, setDocuments]               = useState([]);
+  const [resumes, setResumes] = useState([]);
   const [selectedResumeId, setSelectedResumeId] = useState("");
   const [selectedCoverId, setSelectedCoverId]   = useState("");
-  const [uploadType, setUploadType]             = useState("RESUME");
-  const [uploadFile, setUploadFile]             = useState(null);
-  const [customTitle, setCustomTitle]           = useState("");
+  const [resumeLoading, setResumeLoading] = useState(true);
 
   /* ── Interview settings ───────────────────── */
   const [jobField, setJobField]               = useState("BACKEND");
@@ -57,70 +48,25 @@ export default function SessionSetupForm({ onSubmit, isSubmitting }) {
   const testStartedAtRef = useRef(0);
   const maxLevelRef      = useRef(0);
 
-  /* ── Load / persist documents ─────────────── */
+  /* ── Load resumes from backend ──────────────── */
   useEffect(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem(DOC_STORAGE_KEY) || "[]");
-      if (Array.isArray(stored)) setDocuments(stored);
-    } catch { setDocuments([]); }
+    async function loadResumes() {
+      try {
+        const data = await getMyResumes();
+        setResumes(Array.isArray(data) ? data : []);
+        if (data.length > 0) setSelectedResumeId(String(data[0].id));
+      } catch {
+        setResumes([]);
+      } finally {
+        setResumeLoading(false);
+      }
+    }
+    loadResumes();
   }, []);
-
-  useEffect(() => {
-    localStorage.setItem(DOC_STORAGE_KEY, JSON.stringify(documents));
-  }, [documents]);
-
-  useEffect(() => {
-    const resumes = documents.filter((d) => d.type === "RESUME");
-    const covers  = documents.filter((d) => d.type === "COVER_LETTER");
-    if (resumes.length > 0 && !resumes.some((d) => String(d.id) === selectedResumeId))
-      setSelectedResumeId(String(resumes[0].id));
-    if (covers.length > 0 && !covers.some((d) => String(d.id) === selectedCoverId))
-      setSelectedCoverId(String(covers[0].id));
-    if (resumes.length === 0) setSelectedResumeId("");
-    if (covers.length  === 0) setSelectedCoverId("");
-  }, [documents, selectedResumeId, selectedCoverId]);
 
   /* cleanup mic on unmount */
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => () => stopMicTest(false), []);
-
-  const resumeDocs = documents.filter((d) => d.type === "RESUME");
-  const coverDocs  = documents.filter((d) => d.type === "COVER_LETTER");
-
-  /* ── Document helpers ─────────────────────── */
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState("");
-
-  const uploadDocument = async () => {
-    if (!uploadFile) return;
-    setUploading(true);
-    setUploadError("");
-
-    const title = customTitle.trim() || uploadFile.name;
-
-    try {
-      // 백엔드에 PDF 업로드 → 파싱 → DB 저장
-      const result = await uploadPdfResume(uploadFile, title);
-
-      setDocuments((prev) => [
-        {
-          id: result.id,  // 백엔드에서 반환한 실제 DB ID
-          type: uploadType,
-          name: title,
-          fileName: uploadFile.name,
-          size: uploadFile.size || 0,
-          uploadedAt: result.createdAt || new Date().toISOString(),
-        },
-        ...prev,
-      ]);
-      setUploadFile(null);
-      setCustomTitle("");
-    } catch (err) {
-      setUploadError(err.message || "업로드에 실패했습니다.");
-    } finally {
-      setUploading(false);
-    }
-  };
 
   /* ── Mic helpers ──────────────────────────── */
   const startMicTest = async () => {
@@ -190,83 +136,38 @@ export default function SessionSetupForm({ onSubmit, isSubmitting }) {
   const Step1 = (
     <div className="step-body">
       <div className="step-desc">
-        <h2>이력서 / 자소서 업로드</h2>
+        <h2>이력서 선택</h2>
         <p className="subtext">
-          문서를 업로드하면 RAG 기반으로 직무 맞춤 질문이 생성됩니다.
+          마이페이지에서 등록한 이력서 중 면접에 사용할 이력서를 선택하세요.
           없으면 <strong>건너뛰기</strong>를 눌러도 됩니다.
         </p>
       </div>
 
-      <div className="panel">
-        <div className="field-row">
+      {resumeLoading ? (
+        <p className="subtext">이력서 목록을 불러오는 중...</p>
+      ) : resumes.length === 0 ? (
+        <div className="panel">
+          <p className="subtext">
+            등록된 이력서가 없습니다. 마이페이지에서 이력서를 먼저 등록해 주세요.
+          </p>
+        </div>
+      ) : (
+        <div className="panel">
           <label className="field">
-            <span>문서 유형</span>
-            <select value={uploadType} onChange={(e) => setUploadType(e.target.value)}>
-              <option value="RESUME">이력서</option>
-              <option value="COVER_LETTER">자소서</option>
+            <span>이력서 선택</span>
+            <select value={selectedResumeId} onChange={(e) => setSelectedResumeId(e.target.value)}>
+              <option value="">선택 안 함</option>
+              {resumes.map((r) => (
+                <option value={r.id} key={r.id}>{r.title}</option>
+              ))}
             </select>
           </label>
-          <label className="field">
-            <span>표시 이름 (선택)</span>
-            <input
-              value={customTitle}
-              onChange={(e) => setCustomTitle(e.target.value)}
-              placeholder="예: 백엔드 지원 자소서"
-            />
-          </label>
+          {selectedResumeId && (
+            <p className="subtext compact" style={{ marginTop: "0.5rem" }}>
+              선택된 이력서: {resumes.find((r) => String(r.id) === selectedResumeId)?.title}
+            </p>
+          )}
         </div>
-        <div className="upload-row">
-          <input
-            type="file"
-            accept=".pdf,.doc,.docx,.txt"
-            onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
-          />
-          <button className="ghost-btn" type="button" onClick={uploadDocument} disabled={!uploadFile || uploading}>
-            {uploading ? "업로드 중..." : "추가"}
-          </button>
-        </div>
-        {uploadError && <p className="subtext" style={{ color: "red" }}>{uploadError}</p>}
-      </div>
-
-      {documents.length > 0 && (
-        <>
-          <div className="doc-list">
-            {documents.map((doc) => (
-              <article key={doc.id} className="doc-item">
-                <div>
-                  <strong>{doc.name}</strong>
-                  <p className="subtext compact">
-                    {doc.type === "RESUME" ? "이력서" : "자소서"} · {doc.fileName} · {formatSize(doc.size)}
-                  </p>
-                </div>
-                <button
-                  className="ghost-btn"
-                  type="button"
-                  onClick={() => setDocuments((p) => p.filter((d) => d.id !== doc.id))}
-                >
-                  삭제
-                </button>
-              </article>
-            ))}
-          </div>
-
-          <div className="field-row">
-            <label className="field">
-              <span>이력서 선택</span>
-              <select value={selectedResumeId} onChange={(e) => setSelectedResumeId(e.target.value)}>
-                <option value="">선택 안 함</option>
-                {resumeDocs.map((d) => <option value={d.id} key={d.id}>{d.name}</option>)}
-              </select>
-            </label>
-            <label className="field">
-              <span>자소서 선택</span>
-              <select value={selectedCoverId} onChange={(e) => setSelectedCoverId(e.target.value)}>
-                <option value="">선택 안 함</option>
-                {coverDocs.map((d) => <option value={d.id} key={d.id}>{d.name}</option>)}
-              </select>
-            </label>
-          </div>
-        </>
       )}
     </div>
   );
@@ -379,8 +280,8 @@ export default function SessionSetupForm({ onSubmit, isSubmitting }) {
     </div>
   );
 
-  const selectedResume = resumeDocs.find((d) => String(d.id) === selectedResumeId);
-  const selectedCover  = coverDocs.find((d) => String(d.id) === selectedCoverId);
+  const selectedResume = resumes.find((r) => String(r.id) === selectedResumeId);
+  const selectedCover  = null;
 
   const Step4 = (
     <div className="step-body">
@@ -400,11 +301,11 @@ export default function SessionSetupForm({ onSubmit, isSubmitting }) {
         </div>
         <div className="confirm-item">
           <span>이력서</span>
-          <strong>{selectedResume ? selectedResume.name : "없음"}</strong>
+          <strong>{selectedResume ? selectedResume.title : "없음"}</strong>
         </div>
         <div className="confirm-item">
           <span>자소서</span>
-          <strong>{selectedCover ? selectedCover.name : "없음"}</strong>
+          <strong>{selectedCover ? selectedCover.title : "없음"}</strong>
         </div>
         <div className="confirm-item">
           <span>마이크 테스트</span>
