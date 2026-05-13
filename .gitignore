@@ -47,6 +47,9 @@ out
 !.env.development
 !.env.production
 
+# Kiro IDE
+.kiro/
+
 # Misc
 .DS_Store
 *.tsbuildinfo
