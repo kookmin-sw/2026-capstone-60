@@ -1,4 +1,5 @@
 import { useState } from "react";
+import ResumeManager from "./ResumeManager";
 
 export default function MyPage({ user, onUpdate, onDelete, updating, deleting }) {
   const [name, setName] = useState(user?.name || "");
@@ -94,6 +95,9 @@ export default function MyPage({ user, onUpdate, onDelete, updating, deleting })
           </div>
         </dl>
       </section>
+
+      {/* 이력서 관리 */}
+      <ResumeManager />
 
       {/* 정보 수정 */}
       <section className="card mypage-card">
