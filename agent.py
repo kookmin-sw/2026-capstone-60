@@ -279,7 +279,10 @@ class InterviewerAgent(Agent):
         # ③ shutdown
         logger.info("[면접 종료] session=%s total_turns=%d",
                     self.interview.session_id, len(self.interview.history))
-        self.session.shutdown()
+        try:
+            self.session.shutdown()
+        except RuntimeError:
+            pass  # Agent activity가 이미 종료된 경우 무시
 
     async def llm_node(
         self,
@@ -322,6 +325,8 @@ def _extract_last_user_text(chat_ctx: llm_types.ChatContext) -> str:
     return ""
 
 
+from livekit.agents import WorkerOptions
+
 # ─────────────────────────────────────────────────────────
 # Worker 정의
 # ─────────────────────────────────────────────────────────
@@ -337,7 +342,6 @@ def prewarm(proc: JobProcess) -> None:
 server.setup_fnc = prewarm
 
 
-@server.rtc_session()
 async def entrypoint(ctx: JobContext) -> None:
     """Room 이 배정될 때마다 호출되는 진입점."""
     metadata = _load_metadata(ctx)
@@ -399,4 +403,10 @@ async def entrypoint(ctx: JobContext) -> None:
 
 
 if __name__ == "__main__":
-    cli.run_app(server)
+    cli.run_app(
+        WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            prewarm_fnc=prewarm,
+            agent_name="interviewer-agent",
+        )
+    )
