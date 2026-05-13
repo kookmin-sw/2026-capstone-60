@@ -59,7 +59,7 @@ async def save_qna(
     }
     headers = {"Content-Type": "application/json"}
     if SERVICE_TOKEN:
-        headers["Authorization"] = f"Bearer {SERVICE_TOKEN}"
+        headers["X-Service-Token"] = SERVICE_TOKEN
 
     for attempt in range(MAX_RETRIES):
         try:
