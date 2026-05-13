@@ -2,7 +2,8 @@ import { getAccessToken } from "../auth/tokenStorage";
 
 const BACKEND_BASE_URL =
   import.meta.env.VITE_BACKEND_BASE_URL || "http://localhost:8080";
-const RESUME_API_URL = `${BACKEND_BASE_URL}/v1/resumes`;
+const RESUME_API_URL =
+  import.meta.env.VITE_RESUME_BASE_URL || `${BACKEND_BASE_URL}/v1/resumes`;
 
 /**
  * PDF 이력서를 백엔드에 업로드한다.
