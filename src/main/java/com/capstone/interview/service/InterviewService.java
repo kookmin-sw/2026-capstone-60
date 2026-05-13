@@ -106,6 +106,8 @@ public class InterviewService {
         InterviewQna firstTurn = InterviewQna.builder()
                 .interview(interview)
                 .sequenceNumber(1)
+                .questionContent("")
+                .answerContent("")
                 .startedAt(now)
                 .expiresAt(now.plusSeconds(ANSWER_TIME_LIMIT_SECONDS))
                 .build();
@@ -144,6 +146,8 @@ public class InterviewService {
         InterviewQna nextQna = InterviewQna.builder()
                 .interview(interview)
                 .sequenceNumber(nextTurnNumber)
+                .questionContent("")
+                .answerContent("")
                 .startedAt(now)
                 .expiresAt(expiresAt)
                 .build();
