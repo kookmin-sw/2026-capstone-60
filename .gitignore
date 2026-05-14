@@ -47,8 +47,9 @@ out
 !.env.development
 !.env.production
 
-# Kiro IDE
+# IDE
 .kiro/
+.vscode/
 
 # Misc
 .DS_Store
