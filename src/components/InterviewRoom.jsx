@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Room, RoomEvent } from "livekit-client";
 import useCountdown from "../hooks/useCountdown";
+import useNextQuestionGuard from "../hooks/useNextQuestionGuard";
 import { nextQuestion } from "../api/interviewApi";
 
 const WARNING_THRESHOLD = 10;
 const AGENT_TIMEOUT_MS = 60000; // 60초 (TTS 초기화 시간 고려)
+const NEXT_COOLDOWN_MS = 2000;
+const EXPIRES_AT_FALLBACK_THRESHOLD_MS = 5000;
 
 export default function InterviewRoom({
   session,
@@ -26,37 +29,47 @@ export default function InterviewRoom({
   const answerTimeLimitSeconds = session.answerTimeLimitSeconds || 90;
   const totalDurationSeconds = session.totalDurationSeconds || session.durationMinutes * 60;
 
-  // 동기 in-flight 가드.
-  // React state(nextLoading)는 비동기 setState라 같은 렌더 프레임 내 두 번째
-  // 호출이 false로 캡처된 채 통과할 수 있다. ref는 동기적으로 즉시 반영된다.
-  const inFlightRef = useRef(false);
-  // 클라이언트 사이드 cooldown: 마지막 /next 호출 시각 기록.
-  // 백엔드 멱등성 가드와 짝이 되는 이중 안전망으로, 2초 이내 재호출을 차단한다.
-  const lastNextAtRef = useRef(0);
-  const NEXT_COOLDOWN_MS = 2000;
+  // 절대 시각(ms) 기반 타이머 deadline.
+  // - interviewExpiresAt: 면접 시작 시점에 한 번 고정.
+  // - answerExpiresAt: 매 턴마다 갱신 (첫 턴 시작 / /next 응답 / Agent QUESTION 수신).
+  //   Mock 모드는 컴포넌트 마운트 즉시 첫 질문이 표시되므로 초기값을 바로 설정한다.
+  //   실제 모드는 Agent 의 QUESTION DataMessage 수신 시 설정된다.
+  const [interviewExpiresAt] = useState(() => Date.now() + totalDurationSeconds * 1000);
+  const [answerExpiresAt, setAnswerExpiresAt] = useState(
+    () => session.livekit?.isMock ? Date.now() + answerTimeLimitSeconds * 1000 : null
+  );
+
+  // 동기 가드 (in-flight + cooldown).
+  const nextGuard = useNextQuestionGuard({ cooldownMs: NEXT_COOLDOWN_MS });
+  // 턴 SSOT 검증을 위해 ref 도 유지 (closure 안에서 최신 값 즉시 참조).
+  const turnRef = useRef(1);
+
+  const updateTurn = useCallback((next) => {
+    turnRef.current = next;
+    setTurn(next);
+  }, []);
 
   // 답변 타이머 만료 시 자동으로 /next 호출.
-  // nextLoading(state) 대신 inFlightRef(ref)로 검사해 동기 차단.
+  // in-flight 차단은 nextGuard.tryAcquire 가 담당하므로 여기서는 ending 만 검사.
   const handleAnswerTimerExpire = useCallback(async () => {
-    if (ending || inFlightRef.current) return;
-    addLog("SYSTEM", `Q${turn} 답변 시간이 종료되었습니다. 다음 질문을 요청합니다.`);
+    if (ending) return;
+    addLog("SYSTEM", `Q${turnRef.current} 답변 시간이 종료되었습니다. 다음 질문을 요청합니다.`);
     await requestNextQuestion();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turn, ending]);
+  }, [ending]);
 
-  const interviewTimer = useCountdown(
-    totalDurationSeconds,
-    isConnected && !ending && !waitingForAgent,
-    useCallback(() => {
-      onSessionEnd("TIME_OVER");
-    }, [onSessionEnd])
-  );
+  const interviewTimer = useCountdown({
+    expiresAt: interviewExpiresAt,
+    isActive: isConnected && !ending && !waitingForAgent,
+    onFinish: useCallback(() => onSessionEnd("TIME_OVER"), [onSessionEnd]),
+  });
 
-  const answerTimer = useCountdown(
-    answerTimeLimitSeconds,
-    isConnected && !ending && !waitingForAgent && currentQuestion !== "",
-    handleAnswerTimerExpire
-  );
+  const answerTimer = useCountdown({
+    expiresAt: answerExpiresAt,
+    isActive:
+      isConnected && !ending && !waitingForAgent && currentQuestion !== "" && answerExpiresAt != null,
+    onFinish: handleAnswerTimerExpire,
+  });
 
   const canAskNextQuestion = interviewTimer.secondsLeft > answerTimeLimitSeconds;
 
@@ -72,23 +85,36 @@ export default function InterviewRoom({
   }, [answerTimer.secondsLeft]);
 
   // Agent QUESTION 메시지 수신 핸들러
-  const handleDataReceived = useCallback((payload, participant, kind, topic) => {
+  // 턴 SSOT: /next 응답으로 setTurn 한 직후 Agent QUESTION 의 turnNumber 와 일치해야 한다.
+  // 불일치 시 경고를 남기고 Agent 값으로 정렬 (Agent 가 실제 질문 텍스트의 출처이므로).
+  const handleDataReceived = useCallback((payload) => {
     try {
       const msg = JSON.parse(new TextDecoder().decode(payload));
       if (msg.type === "QUESTION") {
         const { turnNumber, text } = msg.payload;
-        setTurn(turnNumber);
+        if (typeof turnNumber === "number" && turnNumber !== turnRef.current) {
+          console.warn(
+            `[InterviewRoom] 턴 번호 불일치: client=${turnRef.current}, agent=${turnNumber}. ` +
+            `Agent 값으로 정렬합니다.`
+          );
+          addLog(
+            "WARN",
+            `턴 번호 불일치 감지 (서버=${turnRef.current}, 면접관=${turnNumber}). 면접관 값으로 갱신합니다.`
+          );
+          updateTurn(turnNumber);
+        }
         setCurrentQuestion(text);
         setWaitingForAgent(false);
         setWarningVisible(false);
-        answerTimer.reset(answerTimeLimitSeconds);
+        // 첫 턴 또는 /next 응답에 expiresAt 이 없었던 경우를 대비해 풀 시간으로 deadline 설정.
+        // /next 응답에 정상 expiresAt 이 있었다면 이 시점에는 이미 그 값이 적용된 상태.
+        setAnswerExpiresAt(Date.now() + answerTimeLimitSeconds * 1000);
         addLog("QUESTION", `Q${turnNumber}. ${text}`);
       }
     } catch (e) {
       // 파싱 실패 시 무시
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [answerTimeLimitSeconds]);
+  }, [answerTimeLimitSeconds, updateTurn]);
 
   // LiveKit Room 연결
   useEffect(() => {
@@ -96,6 +122,7 @@ export default function InterviewRoom({
       setIsConnected(true);
       setWaitingForAgent(false);
       setCurrentQuestion("최근 프로젝트에서 가장 어려웠던 기술 의사결정 사례를 설명해주세요.");
+      // answerExpiresAt 은 useState 초기값에서 이미 설정됨.
       return undefined;
     }
 
@@ -122,7 +149,7 @@ export default function InterviewRoom({
       }
     });
 
-    room.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
+    room.on(RoomEvent.TrackUnsubscribed, (track) => {
       if (track.kind === "audio") {
         track.detach().forEach((el) => el.remove());
       }
@@ -130,7 +157,7 @@ export default function InterviewRoom({
 
     room.on(RoomEvent.DataReceived, handleDataReceived);
 
-    room.on(RoomEvent.ParticipantConnected, (participant) => {
+    room.on(RoomEvent.ParticipantConnected, () => {
       setWaitingForAgent(false);
       addLog("SYSTEM", "AI 면접관이 접속했습니다. 첫 질문을 준비 중입니다.");
     });
@@ -174,57 +201,54 @@ export default function InterviewRoom({
   // "다음 질문" 버튼 → POST /next
   const requestNextQuestion = async () => {
     if (!canAskNextQuestion || ending) return;
-    if (inFlightRef.current) return;   // 동기 중복 차단
+    if (inFlightRef.current) return;
     const now = Date.now();
-    if (now - lastNextAtRef.current < NEXT_COOLDOWN_MS) return;  // cooldown 차단
+    if (now - lastNextAtRef.current < NEXT_COOLDOWN_MS) return;
     inFlightRef.current = true;
     lastNextAtRef.current = now;
     setNextLoading(true);
 
     try {
-      const response = await nextQuestion(session.sessionId, turn);
-      // /next 응답 turnNumber 즉시 동기화 (실제 모드 / Mock 모드 공통).
-      // 이전에는 Mock 모드에서만 setTurn을 호출했다. 실제 모드에서는 Agent의
-      // QUESTION DataMessage를 기다렸기 때문에 그 사이 /next가 한 번 더 나가면
-      // 이전 turn 값이 currentTurnNumber로 들어가 백엔드 warn 로그가 찍혔다.
-      // 응답값으로 즉시 갱신해 다음 /next 호출의 currentTurnNumber를 정확히 맞춘다.
-      // (실제 모드에서 질문 텍스트는 여전히 Agent의 QUESTION DataMessage로 수신)
+      const response = await nextQuestion(session.sessionId, turnRef.current);
       const data = response?.data ?? response ?? {};
+
+      // 턴 번호 즉시 동기화 (실제/Mock 공통).
       if (typeof data.turnNumber === "number") {
-        setTurn(data.turnNumber);
+        updateTurn(data.turnNumber);
       }
       if (session.livekit?.isMock) {
         setCurrentQuestion(`Mock 질문 ${data.turnNumber}: 다음 질문입니다.`);
       }
 
-      // expiresAt 안전 처리: Math.max(1, ...) 하한 클램프 제거.
-      // 클램프가 비정상 expiresAt(과거/누락)을 1초로 만들어 1초 루프를 유발했다.
-      // 5초 이하면 비정상으로 판단해 풀 시간으로 폴백하고 로그에 경고를 남긴다.
-      let remaining = answerTimeLimitSeconds;
+      // 답변 deadline 설정. 비정상 expiresAt(<=5초) 은 풀 시간으로 폴백 + 사용자 노출 경고.
+      let nextDeadline = Date.now() + answerTimeLimitSeconds * 1000;
       if (data.expiresAt) {
-        const ms = new Date(data.expiresAt).getTime() - Date.now();
-        if (ms > 5000) {
-          remaining = Math.round(ms / 1000);
+        const parsed = new Date(data.expiresAt).getTime();
+        const ms = parsed - Date.now();
+        if (ms > EXPIRES_AT_FALLBACK_THRESHOLD_MS) {
+          nextDeadline = parsed;
         } else {
           console.warn(
             `[InterviewRoom] 비정상 expiresAt 수신 (남은 ms=${ms}). ` +
             `답변 시간을 ${answerTimeLimitSeconds}초로 폴백합니다.`
           );
-          addLog("WARN", `서버 타이머가 비정상입니다. 답변 시간을 ${answerTimeLimitSeconds}초로 재설정했습니다.`);
+          addLog(
+            "WARN",
+            `서버 타이머가 비정상입니다. 답변 시간을 ${answerTimeLimitSeconds}초로 재설정했습니다.`
+          );
         }
       }
-      answerTimer.reset(remaining);
-
+      setAnswerExpiresAt(nextDeadline);
       setWarningVisible(false);
 
       addLog("SYSTEM", `다음 질문을 요청했습니다. (턴 ${data.turnNumber})`);
     } catch (err) {
       addLog("SYSTEM", `다음 질문 요청 실패: ${err.message}`);
-      // 실패 시에도 타이머를 풀 시간으로 리셋해 secondsLeft=0 잔류 방지
-      answerTimer.reset(answerTimeLimitSeconds);
+      // 실패 시 풀 시간으로 폴백 (secondsLeft=0 잔류로 인한 재발화 방지).
+      setAnswerExpiresAt(Date.now() + answerTimeLimitSeconds * 1000);
     } finally {
       setNextLoading(false);
-      inFlightRef.current = false;
+      nextGuard.release();
     }
   };
 
@@ -317,9 +341,9 @@ export default function InterviewRoom({
             <span>전체 남은 시간</span>
             <strong>{interviewTimer.formatted}</strong>
           </div>
-          <div className={`timer-box ${answerTimer.secondsLeft <= 15 ? "danger" : ""}`}>
+          <div className={`timer-box ${answerExpiresAt != null && answerTimer.secondsLeft <= 15 ? "danger" : ""}`}>
             <span>답변 남은 시간 ({Math.floor(answerTimeLimitSeconds / 60)}:{String(answerTimeLimitSeconds % 60).padStart(2, "0")})</span>
-            <strong>{answerTimer.formatted}</strong>
+            <strong>{answerExpiresAt == null ? "대기 중" : answerTimer.formatted}</strong>
           </div>
         </div>
 
