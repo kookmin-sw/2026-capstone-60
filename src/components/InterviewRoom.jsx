@@ -26,13 +26,19 @@ export default function InterviewRoom({
   const answerTimeLimitSeconds = session.answerTimeLimitSeconds || 90;
   const totalDurationSeconds = session.totalDurationSeconds || session.durationMinutes * 60;
 
-  // 답변 타이머 만료 시 자동으로 /next 호출
+  // 동기 in-flight 가드.
+  // React state(nextLoading)는 비동기 setState라 같은 렌더 프레임 내 두 번째
+  // 호출이 false로 캡처된 채 통과할 수 있다. ref는 동기적으로 즉시 반영된다.
+  const inFlightRef = useRef(false);
+
+  // 답변 타이머 만료 시 자동으로 /next 호출.
+  // nextLoading(state) 대신 inFlightRef(ref)로 검사해 동기 차단.
   const handleAnswerTimerExpire = useCallback(async () => {
-    if (ending || nextLoading) return;
+    if (ending || inFlightRef.current) return;
     addLog("SYSTEM", `Q${turn} 답변 시간이 종료되었습니다. 다음 질문을 요청합니다.`);
     await requestNextQuestion();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turn, ending, nextLoading]);
+  }, [turn, ending]);
 
   const interviewTimer = useCountdown(
     totalDurationSeconds,
@@ -84,7 +90,6 @@ export default function InterviewRoom({
   useEffect(() => {
     if (session.livekit?.isMock) {
       setIsConnected(true);
-      // Mock 모드에서는 Agent 대기 없이 바로 시작
       setWaitingForAgent(false);
       setCurrentQuestion("최근 프로젝트에서 가장 어려웠던 기술 의사결정 사례를 설명해주세요.");
       return undefined;
@@ -103,11 +108,8 @@ export default function InterviewRoom({
       }
     }
 
-    room.on(RoomEvent.Disconnected, () => {
-      setIsConnected(false);
-    });
+    room.on(RoomEvent.Disconnected, () => setIsConnected(false));
 
-    // Agent 오디오 트랙 자동 재생
     room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
       if (track.kind === "audio") {
         const audioEl = track.attach();
@@ -122,16 +124,13 @@ export default function InterviewRoom({
       }
     });
 
-    // Agent QUESTION 메시지 수신
     room.on(RoomEvent.DataReceived, handleDataReceived);
 
-    // Agent 참가자 감지 → 대기 해제
     room.on(RoomEvent.ParticipantConnected, (participant) => {
       setWaitingForAgent(false);
       addLog("SYSTEM", "AI 면접관이 접속했습니다. 첫 질문을 준비 중입니다.");
     });
 
-    // 이미 Room에 있는 참가자 확인
     const checkExistingParticipants = () => {
       if (room.remoteParticipants.size > 0) {
         setWaitingForAgent(false);
@@ -143,7 +142,6 @@ export default function InterviewRoom({
 
     return () => {
       room.off(RoomEvent.DataReceived, handleDataReceived);
-      // Agent 오디오 엘리먼트 정리
       room.remoteParticipants.forEach((p) => {
         p.audioTrackPublications.forEach((pub) => {
           if (pub.track) pub.track.detach().forEach((el) => el.remove());
@@ -154,16 +152,14 @@ export default function InterviewRoom({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.livekit.accessToken, session.livekit.url]);
 
-  // Agent 접속 타임아웃 (15초)
+  // Agent 접속 타임아웃
   useEffect(() => {
     if (!isConnected || !waitingForAgent || session.livekit?.isMock) return undefined;
 
     const timeout = setTimeout(() => {
       if (waitingForAgent) {
         setAgentTimedOut(true);
-        setConnectionError(
-          "AI 면접관이 응답하지 않습니다. 잠시 후 다시 시도해주세요."
-        );
+        setConnectionError("AI 면접관이 응답하지 않습니다. 잠시 후 다시 시도해주세요.");
         addLog("SYSTEM", "Agent 접속 타임아웃 — 면접을 시작할 수 없습니다.");
       }
     }, AGENT_TIMEOUT_MS);
@@ -173,13 +169,16 @@ export default function InterviewRoom({
 
   // "다음 질문" 버튼 → POST /next
   const requestNextQuestion = async () => {
-    if (!canAskNextQuestion || nextLoading || ending) return;
+    if (!canAskNextQuestion || ending) return;
+    if (inFlightRef.current) return;   // 동기 중복 차단
+    inFlightRef.current = true;
+    setNextLoading(true);
+
     try {
-      setNextLoading(true);
       const response = await nextQuestion(session.sessionId, turn);
       const data = response.data;
 
-      // expiresAt 기반 카운트다운 리셋
+      // expiresAt 기반 카운트다운 리셋 (원본 로직 유지, Task 3에서 개선)
       if (data.expiresAt) {
         const remaining = Math.max(
           1,
@@ -191,8 +190,6 @@ export default function InterviewRoom({
       }
 
       setWarningVisible(false);
-      // 실제 질문 텍스트는 Agent의 QUESTION DataMessage로 수신됨
-      // Mock 모드에서는 직접 턴 업데이트
       if (session.livekit?.isMock) {
         setTurn(data.turnNumber);
         setCurrentQuestion(`Mock 질문 ${data.turnNumber}: 다음 질문입니다.`);
@@ -203,6 +200,7 @@ export default function InterviewRoom({
       addLog("SYSTEM", `다음 질문 요청 실패: ${err.message}`);
     } finally {
       setNextLoading(false);
+      inFlightRef.current = false;
     }
   };
 
@@ -236,7 +234,6 @@ export default function InterviewRoom({
     ]);
   }
 
-  // Agent 대기 화면
   if (waitingForAgent && !session.livekit?.isMock) {
     return (
       <section className="card">
