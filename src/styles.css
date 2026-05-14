@@ -1,4 +1,81 @@
 /* ═══════════════════════════════════════════════════
+   Tailwind CSS v4 — Preflight 제외하고 import
+   (기존 styles.css 의 button/h1/input 등 기본 스타일을
+    유지하기 위해 전역 reset 인 preflight 는 끈다)
+
+   Layer 순서 핵심:
+   - app(우리 기존 스타일)을 utilities 앞에 둬서
+     v0 시안의 Tailwind utility 클래스가 항상 우선되게 한다.
+   - 다른 화면(로그인/홈 등)은 .primary-btn 같은 자체 클래스라 충돌 없음.
+═══════════════════════════════════════════════════ */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&display=swap');
+
+@layer theme, base, app, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@layer app {
+
+/* ═══════════════════════════════════════════════════
+   v0 시안 시맨틱 토큰 (OKLCH 기반)
+   InterviewRoom 시안의 Button/Badge 등이 사용한다.
+   기존 화면(파스텔 블루 톤)에는 영향이 없도록 변수만 정의.
+═══════════════════════════════════════════════════ */
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.577 0.245 27.325);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --radius: 0.625rem;
+  /* 기존 --border 변수와 충돌하지 않도록 v0 전용 이름 사용 */
+  --v0-border: oklch(0.922 0 0);
+
+  /* 폰트 변수 — v0 시안의 font-[family-name:var(--font-jetbrains)] */
+  --font-jetbrains: 'JetBrains Mono', monospace;
+}
+
+/* Tailwind v4 @theme inline — 시맨틱 토큰을 Tailwind 클래스로 노출 */
+@theme inline {
+  --font-jetbrains: var(--font-jetbrains);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* ═══════════════════════════════════════════════════
    Design Tokens
 ═══════════════════════════════════════════════════ */
 :root {
@@ -57,6 +134,10 @@ body {
   color: var(--slate-900);
   background: var(--bg);
   min-height: 100vh;
+  /* 글씨 선명도 향상 — Win+Shift+S 캡처처럼 또렷하게 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 h1, h2, h3, h4 { line-height: 1.3; letter-spacing: -.02em; }
@@ -130,6 +211,16 @@ h1, h2, h3, h4 { line-height: 1.3; letter-spacing: -.02em; }
   max-width: 1120px;
   margin: 0 auto;
   padding: 32px 24px 64px;
+}
+
+/* 면접룸 전용 — 풀스크린, 헤더 없음 */
+.interview-shell {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
 }
 
 .page-content    { }
@@ -1064,3 +1155,5 @@ input:focus, select:focus {
   transition: opacity .15s, transform .12s;
 }
 .chip-btn:hover:not(:disabled) { opacity: .85; transform: translateY(-1px); }
+
+} /* end @layer app */
