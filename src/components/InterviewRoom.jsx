@@ -178,16 +178,23 @@ export default function InterviewRoom({
       const response = await nextQuestion(session.sessionId, turn);
       const data = response.data;
 
-      // expiresAt 기반 카운트다운 리셋 (원본 로직 유지, Task 3에서 개선)
+      // expiresAt 안전 처리: Math.max(1, ...) 하한 클램프 제거.
+      // 클램프가 비정상 expiresAt(과거/누락)을 1초로 만들어 1초 루프를 유발했다.
+      // 5초 이하면 비정상으로 판단해 풀 시간으로 폴백하고 로그에 경고를 남긴다.
+      let remaining = answerTimeLimitSeconds;
       if (data.expiresAt) {
-        const remaining = Math.max(
-          1,
-          Math.round((new Date(data.expiresAt).getTime() - Date.now()) / 1000)
-        );
-        answerTimer.reset(remaining);
-      } else {
-        answerTimer.reset(answerTimeLimitSeconds);
+        const ms = new Date(data.expiresAt).getTime() - Date.now();
+        if (ms > 5000) {
+          remaining = Math.round(ms / 1000);
+        } else {
+          console.warn(
+            `[InterviewRoom] 비정상 expiresAt 수신 (남은 ms=${ms}). ` +
+            `답변 시간을 ${answerTimeLimitSeconds}초로 폴백합니다.`
+          );
+          addLog("WARN", `서버 타이머가 비정상입니다. 답변 시간을 ${answerTimeLimitSeconds}초로 재설정했습니다.`);
+        }
       }
+      answerTimer.reset(remaining);
 
       setWarningVisible(false);
       if (session.livekit?.isMock) {
@@ -198,6 +205,8 @@ export default function InterviewRoom({
       addLog("SYSTEM", `다음 질문을 요청했습니다. (턴 ${data.turnNumber})`);
     } catch (err) {
       addLog("SYSTEM", `다음 질문 요청 실패: ${err.message}`);
+      // 실패 시에도 타이머를 풀 시간으로 리셋해 secondsLeft=0 잔류 방지
+      answerTimer.reset(answerTimeLimitSeconds);
     } finally {
       setNextLoading(false);
       inFlightRef.current = false;
