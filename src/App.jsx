@@ -455,9 +455,11 @@ export default function App() {
   const isAuthPage =
     location.pathname === ROUTE.LOGIN || location.pathname === ROUTE.SIGNUP;
   const showNavActions = !isAuthPage && Boolean(user);
+  const isInterviewRoom = location.pathname === ROUTE.ROOM;
 
   return (
     <>
+      {!isInterviewRoom && (
       <header className="app-header">
         <div className="nav-inner">
           <button className="nav-logo" type="button" onClick={() => navigate(ROUTE.HOME)}>
@@ -535,12 +537,13 @@ export default function App() {
           </div>
         </div>
       </header>
-      <main className="app-shell">
-        {isMockMode() && (
+      )}
+      <main className={isInterviewRoom ? "interview-shell" : "app-shell"}>
+        {isMockMode() && !isInterviewRoom && (
           <div className="mock-badge">Mock Mode — 백엔드 없이 단독 테스트 중</div>
         )}
-        {error && <div className="global-error">{error}</div>}
-        <section className="page-content">{renderContent()}</section>
+        {error && !isInterviewRoom && <div className="global-error">{error}</div>}
+        <section className={isInterviewRoom ? "" : "page-content"}>{renderContent()}</section>
       </main>
     </>
   );

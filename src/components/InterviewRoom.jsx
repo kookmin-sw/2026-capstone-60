@@ -1,19 +1,32 @@
+/**
+ * InterviewRoom — 면접룸 컨테이너 (비즈니스 로직 전담)
+ *
+ * - LiveKit Room 연결
+ * - 절대 시각 기반 답변/전체 타이머
+ * - /next 요청 가드 (in-flight + cooldown)
+ * - 턴 SSOT 검증 (서버 응답 vs Agent QUESTION)
+ * - 진행 로그 관리
+ *
+ * 시각은 InterviewRoomView 가 전담. 본 컴포넌트는 props 만 주입한다.
+ */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Room, RoomEvent } from "livekit-client";
 import useCountdown from "../hooks/useCountdown";
 import useNextQuestionGuard from "../hooks/useNextQuestionGuard";
 import { nextQuestion } from "../api/interviewApi";
+import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
+import InterviewRoomView from "./InterviewRoomView";
 
 const WARNING_THRESHOLD = 10;
-const AGENT_TIMEOUT_MS = 60000; // 60초 (TTS 초기화 시간 고려)
+const AGENT_TIMEOUT_MS = 60000;
 const NEXT_COOLDOWN_MS = 2000;
 const EXPIRES_AT_FALLBACK_THRESHOLD_MS = 5000;
 
-export default function InterviewRoom({
-  session,
-  onSessionEnd,
-  ending,
-}) {
+// 화면에 표시하지 않는 로그 타입 (시스템 메시지 등)
+const HIDDEN_LOG_TYPES = new Set(["SYSTEM"]);
+
+export default function InterviewRoom({ session, onSessionEnd, ending }) {
   const roomRef = useRef(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isMicOn, setIsMicOn] = useState(true);
@@ -25,23 +38,18 @@ export default function InterviewRoom({
   const [agentTimedOut, setAgentTimedOut] = useState(false);
   const [nextLoading, setNextLoading] = useState(false);
   const [logs, setLogs] = useState([]);
+  // 단순 휴리스틱: 면접관 발화 직후 잠시 "ai", 그 외엔 "user"
+  const [currentTurnRole, setCurrentTurnRole] = useState("waiting");
 
   const answerTimeLimitSeconds = session.answerTimeLimitSeconds || 90;
   const totalDurationSeconds = session.totalDurationSeconds || session.durationMinutes * 60;
 
-  // 절대 시각(ms) 기반 타이머 deadline.
-  // - interviewExpiresAt: 면접 시작 시점에 한 번 고정.
-  // - answerExpiresAt: 매 턴마다 갱신 (첫 턴 시작 / /next 응답 / Agent QUESTION 수신).
-  //   Mock 모드는 컴포넌트 마운트 즉시 첫 질문이 표시되므로 초기값을 바로 설정한다.
-  //   실제 모드는 Agent 의 QUESTION DataMessage 수신 시 설정된다.
   const [interviewExpiresAt] = useState(() => Date.now() + totalDurationSeconds * 1000);
   const [answerExpiresAt, setAnswerExpiresAt] = useState(
     () => session.livekit?.isMock ? Date.now() + answerTimeLimitSeconds * 1000 : null
   );
 
-  // 동기 가드 (in-flight + cooldown).
   const nextGuard = useNextQuestionGuard({ cooldownMs: NEXT_COOLDOWN_MS });
-  // 턴 SSOT 검증을 위해 ref 도 유지 (closure 안에서 최신 값 즉시 참조).
   const turnRef = useRef(1);
 
   const updateTurn = useCallback((next) => {
@@ -49,8 +57,18 @@ export default function InterviewRoom({
     setTurn(next);
   }, []);
 
-  // 답변 타이머 만료 시 자동으로 /next 호출.
-  // in-flight 차단은 nextGuard.tryAcquire 가 담당하므로 여기서는 ending 만 검사.
+  function addLog(type, text) {
+    setLogs((prev) => [
+      {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        type,
+        text,
+        timestamp: formatLogTime(),
+      },
+      ...prev,
+    ]);
+  }
+
   const handleAnswerTimerExpire = useCallback(async () => {
     if (ending) return;
     addLog("SYSTEM", `Q${turnRef.current} 답변 시간이 종료되었습니다. 다음 질문을 요청합니다.`);
@@ -72,8 +90,16 @@ export default function InterviewRoom({
   });
 
   const canAskNextQuestion = interviewTimer.secondsLeft > answerTimeLimitSeconds;
+  const isUnderTen = answerExpiresAt != null && answerTimer.secondsLeft <= WARNING_THRESHOLD && answerTimer.secondsLeft > 0;
 
-  // 10초 전 경고
+  // 진행 바 비율
+  const answerProgress = answerExpiresAt != null
+    ? Math.min(100, Math.max(0, (answerTimer.secondsLeft / answerTimeLimitSeconds) * 100))
+    : 0;
+  const totalProgress = totalDurationSeconds > 0
+    ? Math.min(100, Math.max(0, (interviewTimer.secondsLeft / totalDurationSeconds) * 100))
+    : 0;
+
   useEffect(() => {
     if (answerTimer.secondsLeft === WARNING_THRESHOLD && answerTimer.secondsLeft > 0) {
       setWarningVisible(true);
@@ -84,45 +110,34 @@ export default function InterviewRoom({
     }
   }, [answerTimer.secondsLeft]);
 
-  // Agent QUESTION 메시지 수신 핸들러
-  // 턴 SSOT: /next 응답으로 setTurn 한 직후 Agent QUESTION 의 turnNumber 와 일치해야 한다.
-  // 불일치 시 경고를 남기고 Agent 값으로 정렬 (Agent 가 실제 질문 텍스트의 출처이므로).
   const handleDataReceived = useCallback((payload) => {
     try {
       const msg = JSON.parse(new TextDecoder().decode(payload));
       if (msg.type === "QUESTION") {
         const { turnNumber, text } = msg.payload;
         if (typeof turnNumber === "number" && turnNumber !== turnRef.current) {
-          console.warn(
-            `[InterviewRoom] 턴 번호 불일치: client=${turnRef.current}, agent=${turnNumber}. ` +
-            `Agent 값으로 정렬합니다.`
-          );
-          addLog(
-            "WARN",
-            `턴 번호 불일치 감지 (서버=${turnRef.current}, 면접관=${turnNumber}). 면접관 값으로 갱신합니다.`
-          );
+          console.warn(`[InterviewRoom] 턴 번호 불일치: client=${turnRef.current}, agent=${turnNumber}.`);
+          addLog("WARN", `턴 번호 불일치 감지 (서버=${turnRef.current}, 면접관=${turnNumber}). 면접관 값으로 갱신합니다.`);
           updateTurn(turnNumber);
         }
         setCurrentQuestion(text);
         setWaitingForAgent(false);
         setWarningVisible(false);
-        // 첫 턴 또는 /next 응답에 expiresAt 이 없었던 경우를 대비해 풀 시간으로 deadline 설정.
-        // /next 응답에 정상 expiresAt 이 있었다면 이 시점에는 이미 그 값이 적용된 상태.
         setAnswerExpiresAt(Date.now() + answerTimeLimitSeconds * 1000);
-        addLog("QUESTION", `Q${turnNumber}. ${text}`);
+        setCurrentTurnRole("user");
+        addLog("AI", `Q${turnNumber}. ${text}`);
       }
     } catch (e) {
       // 파싱 실패 시 무시
     }
   }, [answerTimeLimitSeconds, updateTurn]);
 
-  // LiveKit Room 연결
   useEffect(() => {
     if (session.livekit?.isMock) {
       setIsConnected(true);
       setWaitingForAgent(false);
       setCurrentQuestion("최근 프로젝트에서 가장 어려웠던 기술 의사결정 사례를 설명해주세요.");
-      // answerExpiresAt 은 useState 초기값에서 이미 설정됨.
+      setCurrentTurnRole("user");
       return undefined;
     }
 
@@ -140,23 +155,18 @@ export default function InterviewRoom({
     }
 
     room.on(RoomEvent.Disconnected, () => setIsConnected(false));
-
     room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
       if (track.kind === "audio") {
         const audioEl = track.attach();
         audioEl.id = `audio-${participant.identity}`;
         document.body.appendChild(audioEl);
+        setCurrentTurnRole("ai");
       }
     });
-
     room.on(RoomEvent.TrackUnsubscribed, (track) => {
-      if (track.kind === "audio") {
-        track.detach().forEach((el) => el.remove());
-      }
+      if (track.kind === "audio") track.detach().forEach((el) => el.remove());
     });
-
     room.on(RoomEvent.DataReceived, handleDataReceived);
-
     room.on(RoomEvent.ParticipantConnected, () => {
       setWaitingForAgent(false);
       addLog("SYSTEM", "AI 면접관이 접속했습니다. 첫 질문을 준비 중입니다.");
@@ -183,10 +193,8 @@ export default function InterviewRoom({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.livekit.accessToken, session.livekit.url]);
 
-  // Agent 접속 타임아웃
   useEffect(() => {
     if (!isConnected || !waitingForAgent || session.livekit?.isMock) return undefined;
-
     const timeout = setTimeout(() => {
       if (waitingForAgent) {
         setAgentTimedOut(true);
@@ -194,33 +202,25 @@ export default function InterviewRoom({
         addLog("SYSTEM", "Agent 접속 타임아웃 — 면접을 시작할 수 없습니다.");
       }
     }, AGENT_TIMEOUT_MS);
-
     return () => clearTimeout(timeout);
   }, [isConnected, waitingForAgent, session.livekit?.isMock]);
 
-  // "다음 질문" 버튼 → POST /next
   const requestNextQuestion = async () => {
     if (!canAskNextQuestion || ending) return;
-    if (inFlightRef.current) return;
-    const now = Date.now();
-    if (now - lastNextAtRef.current < NEXT_COOLDOWN_MS) return;
-    inFlightRef.current = true;
-    lastNextAtRef.current = now;
+    if (!nextGuard.tryAcquire()) return;
     setNextLoading(true);
+    setCurrentTurnRole("ai");
 
     try {
       const response = await nextQuestion(session.sessionId, turnRef.current);
       const data = response?.data ?? response ?? {};
 
-      // 턴 번호 즉시 동기화 (실제/Mock 공통).
-      if (typeof data.turnNumber === "number") {
-        updateTurn(data.turnNumber);
-      }
+      if (typeof data.turnNumber === "number") updateTurn(data.turnNumber);
       if (session.livekit?.isMock) {
         setCurrentQuestion(`Mock 질문 ${data.turnNumber}: 다음 질문입니다.`);
+        setCurrentTurnRole("user");
       }
 
-      // 답변 deadline 설정. 비정상 expiresAt(<=5초) 은 풀 시간으로 폴백 + 사용자 노출 경고.
       let nextDeadline = Date.now() + answerTimeLimitSeconds * 1000;
       if (data.expiresAt) {
         const parsed = new Date(data.expiresAt).getTime();
@@ -228,23 +228,15 @@ export default function InterviewRoom({
         if (ms > EXPIRES_AT_FALLBACK_THRESHOLD_MS) {
           nextDeadline = parsed;
         } else {
-          console.warn(
-            `[InterviewRoom] 비정상 expiresAt 수신 (남은 ms=${ms}). ` +
-            `답변 시간을 ${answerTimeLimitSeconds}초로 폴백합니다.`
-          );
-          addLog(
-            "WARN",
-            `서버 타이머가 비정상입니다. 답변 시간을 ${answerTimeLimitSeconds}초로 재설정했습니다.`
-          );
+          console.warn(`[InterviewRoom] 비정상 expiresAt 수신 (남은 ms=${ms}).`);
+          addLog("WARN", `서버 타이머가 비정상입니다. 답변 시간을 ${answerTimeLimitSeconds}초로 재설정했습니다.`);
         }
       }
       setAnswerExpiresAt(nextDeadline);
       setWarningVisible(false);
-
       addLog("SYSTEM", `다음 질문을 요청했습니다. (턴 ${data.turnNumber})`);
     } catch (err) {
       addLog("SYSTEM", `다음 질문 요청 실패: ${err.message}`);
-      // 실패 시 풀 시간으로 폴백 (secondsLeft=0 잔류로 인한 재발화 방지).
       setAnswerExpiresAt(Date.now() + answerTimeLimitSeconds * 1000);
     } finally {
       setNextLoading(false);
@@ -252,7 +244,6 @@ export default function InterviewRoom({
     }
   };
 
-  // 전체 타이머 만료 시 남은 답변 시간이 부족하면 종료
   useEffect(() => {
     if (!canAskNextQuestion && answerTimer.secondsLeft === 0 && !ending) {
       onSessionEnd("TIME_OVER");
@@ -261,148 +252,92 @@ export default function InterviewRoom({
   }, [canAskNextQuestion, answerTimer.secondsLeft, ending]);
 
   const toggleMic = async () => {
-    if (session.livekit?.isMock) {
-      setIsMicOn((prev) => !prev);
-      return;
-    }
+    if (session.livekit?.isMock) { setIsMicOn((prev) => !prev); return; }
     if (!roomRef.current) return;
     const next = !isMicOn;
     await roomRef.current.localParticipant.setMicrophoneEnabled(next);
     setIsMicOn(next);
   };
 
-  const endInterview = async () => {
-    await onSessionEnd("USER_STOP");
-  };
+  const endInterview = async () => { await onSessionEnd("USER_STOP"); };
 
-  function addLog(type, text) {
-    setLogs((prev) => [
-      { id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type, text },
-      ...prev,
-    ]);
-  }
-
+  // ── 대기 화면 ──────────────────────────────────────────────
   if (waitingForAgent && !session.livekit?.isMock) {
     return (
-      <section className="card">
-        <div className="header-row">
-          <div>
-            <p className="eyebrow">Session</p>
-            <h2>AI 면접관 대기 중</h2>
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-[0_4px_20px_rgba(15,40,100,.08)] p-8 flex flex-col gap-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-blue-500 mb-1">Session</p>
+              <h2 className="text-xl font-bold text-slate-900">AI 면접관 대기 중</h2>
+            </div>
+            <Badge variant={isConnected ? "default" : "warning"}>
+              {isConnected ? "연결됨" : "연결 확인 중"}
+            </Badge>
           </div>
-          <span className={`chip ${isConnected ? "success" : "warn"}`}>
-            {isConnected ? "LiveKit 연결됨" : "연결 확인 중"}
-          </span>
-        </div>
 
-        {agentTimedOut ? (
-          <div className="error">
-            {connectionError}
-            <br />
-            <button className="ghost-btn" type="button" onClick={() => window.location.reload()}>
-              새로고침
-            </button>
-          </div>
-        ) : (
-          <div className="spinner-wrap">
-            <div className="spinner" />
-            <span>AI 면접관이 접속할 때까지 기다리고 있습니다...</span>
-          </div>
-        )}
+          {agentTimedOut ? (
+            <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 text-sm text-rose-700 flex flex-col gap-3">
+              <p>{connectionError}</p>
+              <Button variant="ghost" size="sm" onClick={() => window.location.reload()}>
+                새로고침
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-4 py-4">
+              <div className="relative w-16 h-16">
+                <div className="absolute inset-0 rounded-full border-4 border-blue-100" />
+                <div className="absolute inset-0 rounded-full border-4 border-blue-600 border-t-transparent animate-spin" />
+              </div>
+              <p className="text-sm text-slate-500">AI 면접관이 접속할 때까지 기다리고 있습니다...</p>
+            </div>
+          )}
 
-        <div className="room-meta">
-          <p><strong>Session ID</strong> {session.sessionId}</p>
-          <p><strong>Room</strong> {session.livekit.roomName}</p>
+          <div className="bg-slate-50 rounded-xl p-4 text-xs text-slate-500 font-mono space-y-1">
+            <p><span className="text-slate-400">Session</span> {session.sessionId}</p>
+            <p><span className="text-slate-400">Room</span> {session.livekit.roomName}</p>
+          </div>
         </div>
-      </section>
+      </div>
     );
   }
 
+  // ── 메인 면접 화면: View 에 props 주입 ────────────────────
+  const visibleLogs = logs.filter((l) => !HIDDEN_LOG_TYPES.has(l.type));
+
   return (
-    <div className="layout-two-col">
-      <section className="card room-card">
-        <div className="header-row">
-          <div>
-            <p className="eyebrow">Session</p>
-            <h2>면접 진행 중</h2>
-          </div>
-          <span className={`chip ${isConnected ? "success" : "warn"}`}>
-            {isConnected ? "LiveKit 연결됨" : "연결 확인 중"}
-          </span>
-        </div>
+    <InterviewRoomView
+      isConnected={isConnected}
+      sessionId={session.sessionId}
+      totalTimeRemaining={interviewTimer.formatted}
+      totalTimeProgress={totalProgress}
 
-        <div className="room-meta">
-          <p><strong>Session ID</strong> {session.sessionId}</p>
-          <p><strong>Room</strong> {session.livekit.roomName}</p>
-        </div>
+      questionNumber={turn}
+      questionText={currentQuestion}
+      currentTurn={currentTurnRole}
 
-        <div className="timer-grid">
-          <div className="timer-box">
-            <span>전체 남은 시간</span>
-            <strong>{interviewTimer.formatted}</strong>
-          </div>
-          <div className={`timer-box ${answerExpiresAt != null && answerTimer.secondsLeft <= 15 ? "danger" : ""}`}>
-            <span>답변 남은 시간 ({Math.floor(answerTimeLimitSeconds / 60)}:{String(answerTimeLimitSeconds % 60).padStart(2, "0")})</span>
-            <strong>{answerExpiresAt == null ? "대기 중" : answerTimer.formatted}</strong>
-          </div>
-        </div>
+      answerTimeRemaining={answerTimer.formatted}
+      answerTimeProgress={answerProgress}
+      isUnderTen={isUnderTen}
+      showAnswerTimer={answerExpiresAt != null}
 
-        <div className="question-box">
-          <p className="eyebrow">Current Question</p>
-          {currentQuestion ? (
-            <h3>Q{turn}. {currentQuestion}</h3>
-          ) : (
-            <h3 className="subtext">질문을 기다리는 중...</h3>
-          )}
-          <p className="subtext compact">
-            답변이 충분하면 일반 질문, 부족하면 꼬리 질문으로 이어질 수 있습니다.
-          </p>
-        </div>
+      warningVisible={warningVisible}
+      errorMessage=""
 
-        {warningVisible && (
-          <div className="notice warn">
-            10초 후 답변이 종료됩니다. 핵심 결론을 먼저 말해주세요.
-          </div>
-        )}
+      isMicOn={isMicOn}
+      onToggleMic={toggleMic}
+      onNextQuestion={requestNextQuestion}
+      onEndInterview={endInterview}
+      canAskNext={canAskNextQuestion}
+      nextLoading={nextLoading}
+      ending={ending}
 
-        {connectionError && <div className="error">{connectionError}</div>}
-
-        <div className="action-row">
-          <button className="ghost-btn" type="button" onClick={toggleMic}>
-            {isMicOn ? "마이크 끄기" : "마이크 켜기"}
-          </button>
-          <button
-            className="ghost-btn"
-            type="button"
-            onClick={requestNextQuestion}
-            disabled={!canAskNextQuestion || nextLoading || ending}
-          >
-            {nextLoading ? "요청 중..." : "다음 질문"}
-          </button>
-          <button className="danger-btn" type="button" onClick={endInterview} disabled={ending}>
-            {ending ? "종료 처리 중..." : "면접 종료"}
-          </button>
-        </div>
-      </section>
-
-      <aside className="card side-card">
-        <h3>진행 상태</h3>
-        <ul className="status-list">
-          <li>현재 턴: {turn}번</li>
-          <li>답변 제한: {Math.floor(answerTimeLimitSeconds / 60)}분 {answerTimeLimitSeconds % 60}초</li>
-          <li>10초 전 종료 알림 활성화</li>
-          <li>세션 종료 후 자동 평가 진행</li>
-        </ul>
-        <div className="event-log">
-          <strong>실시간 로그</strong>
-          {logs.length === 0 && <p className="subtext compact">아직 이벤트가 없습니다.</p>}
-          {logs.slice(0, 6).map((log) => (
-            <p key={log.id}>
-              [{log.type}] {log.text}
-            </p>
-          ))}
-        </div>
-      </aside>
-    </div>
+      eventLog={visibleLogs}
+    />
   );
+}
+
+function formatLogTime() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
 }
