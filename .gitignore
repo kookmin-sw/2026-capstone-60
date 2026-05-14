@@ -50,6 +50,7 @@ out
 # IDE
 .kiro/
 .vscode/
+.windsurf/
 
 # Misc
 .DS_Store
