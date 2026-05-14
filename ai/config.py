@@ -6,7 +6,7 @@ import os
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 
 # Bedrock LLM
-LLM_MODEL = os.getenv("LLM_MODEL", "anthropic.claude-3-5-sonnet-20241022-v2:0")
+LLM_MODEL = os.getenv("LLM_MODEL", "us.anthropic.claude-sonnet-4-6")
 
 # Knowledge Base (비어 있으면 RAG retrieve 를 skip 한다)
 KNOWLEDGE_BASE_ID = os.getenv("KNOWLEDGE_BASE_ID", "")
