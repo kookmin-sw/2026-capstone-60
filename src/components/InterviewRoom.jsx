@@ -30,6 +30,10 @@ export default function InterviewRoom({
   // React state(nextLoading)는 비동기 setState라 같은 렌더 프레임 내 두 번째
   // 호출이 false로 캡처된 채 통과할 수 있다. ref는 동기적으로 즉시 반영된다.
   const inFlightRef = useRef(false);
+  // 클라이언트 사이드 cooldown: 마지막 /next 호출 시각 기록.
+  // 백엔드 멱등성 가드와 짝이 되는 이중 안전망으로, 2초 이내 재호출을 차단한다.
+  const lastNextAtRef = useRef(0);
+  const NEXT_COOLDOWN_MS = 2000;
 
   // 답변 타이머 만료 시 자동으로 /next 호출.
   // nextLoading(state) 대신 inFlightRef(ref)로 검사해 동기 차단.
@@ -171,7 +175,10 @@ export default function InterviewRoom({
   const requestNextQuestion = async () => {
     if (!canAskNextQuestion || ending) return;
     if (inFlightRef.current) return;   // 동기 중복 차단
+    const now = Date.now();
+    if (now - lastNextAtRef.current < NEXT_COOLDOWN_MS) return;  // cooldown 차단
     inFlightRef.current = true;
+    lastNextAtRef.current = now;
     setNextLoading(true);
 
     try {
