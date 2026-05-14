@@ -176,7 +176,19 @@ export default function InterviewRoom({
 
     try {
       const response = await nextQuestion(session.sessionId, turn);
-      const data = response.data;
+      // /next 응답 turnNumber 즉시 동기화 (실제 모드 / Mock 모드 공통).
+      // 이전에는 Mock 모드에서만 setTurn을 호출했다. 실제 모드에서는 Agent의
+      // QUESTION DataMessage를 기다렸기 때문에 그 사이 /next가 한 번 더 나가면
+      // 이전 turn 값이 currentTurnNumber로 들어가 백엔드 warn 로그가 찍혔다.
+      // 응답값으로 즉시 갱신해 다음 /next 호출의 currentTurnNumber를 정확히 맞춘다.
+      // (실제 모드에서 질문 텍스트는 여전히 Agent의 QUESTION DataMessage로 수신)
+      const data = response?.data ?? response ?? {};
+      if (typeof data.turnNumber === "number") {
+        setTurn(data.turnNumber);
+      }
+      if (session.livekit?.isMock) {
+        setCurrentQuestion(`Mock 질문 ${data.turnNumber}: 다음 질문입니다.`);
+      }
 
       // expiresAt 안전 처리: Math.max(1, ...) 하한 클램프 제거.
       // 클램프가 비정상 expiresAt(과거/누락)을 1초로 만들어 1초 루프를 유발했다.
@@ -197,10 +209,6 @@ export default function InterviewRoom({
       answerTimer.reset(remaining);
 
       setWarningVisible(false);
-      if (session.livekit?.isMock) {
-        setTurn(data.turnNumber);
-        setCurrentQuestion(`Mock 질문 ${data.turnNumber}: 다음 질문입니다.`);
-      }
 
       addLog("SYSTEM", `다음 질문을 요청했습니다. (턴 ${data.turnNumber})`);
     } catch (err) {
