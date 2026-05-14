@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/v1/:path*",
-      "destination": "http://44.202.12.102:8080/v1/:path*"
+      "destination": "http://pj-kmucd1-10.duckdns.org:8080/v1/:path*"
     }
   ]
 }
