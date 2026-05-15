@@ -94,7 +94,7 @@ export default function InterviewRoomView({
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, ease: "easeOut" }}
-        className="relative flex items-center justify-between px-5 py-3 bg-slate-100/90 border-b border-slate-200 z-10"
+        className="relative flex items-center justify-between px-5 py-3 bg-white border-b border-slate-200 z-10"
       >
         {/* Left: Connection Status & Session ID */}
         <div className="flex items-center gap-3">
