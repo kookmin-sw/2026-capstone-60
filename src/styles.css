@@ -271,6 +271,7 @@ button {
   align-items: center;
   justify-content: center;
   gap: 6px;
+  background: transparent;
   border: none;
   border-radius: var(--radius-pill);
   padding: 10px 20px;
