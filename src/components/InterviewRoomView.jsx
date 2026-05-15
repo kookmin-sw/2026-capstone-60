@@ -297,10 +297,10 @@ export default function InterviewRoomView({
           initial={{ opacity: 0, x: 16 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.4, ease: "easeOut", delay: 0.2 }}
-          className="w-[300px] bg-slate-100 border-l border-slate-200 flex flex-col shadow-[-4px_0_20px_rgba(15,40,100,.06)]"
+          className="w-[300px] bg-transparent border-l border-slate-200/60 flex flex-col"
         >
           <div className="flex-1 flex flex-col min-h-0">
-            <div className="px-4 py-3 border-b border-slate-200">
+            <div className="px-4 py-3 border-b border-slate-200/60">
               <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">진행 로그</h3>
             </div>
             <div className="flex-1 overflow-y-auto px-3 py-2">
@@ -349,7 +349,7 @@ export default function InterviewRoomView({
         transition={{ duration: 0.4, ease: "easeOut", delay: 0.3 }}
         className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 w-full max-w-2xl px-4"
       >
-        <div className="flex items-center justify-center gap-4 px-6 py-4 bg-slate-100 border border-slate-200 rounded-2xl shadow-xl shadow-slate-200/60">
+        <div className="flex items-center justify-center gap-4 px-6 py-4 bg-slate-100/60 backdrop-blur-sm border border-slate-200/60 rounded-2xl">
           {/* Mic Toggle */}
           <div className="relative">
             {isMicOn && (
