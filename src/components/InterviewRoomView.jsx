@@ -355,13 +355,24 @@ export default function InterviewRoomView({
             {isMicOn && (
               <>
                 <motion.div
-                  animate={{ scale: [1, 1.5], opacity: [0.4, 0] }}
-                  transition={{ duration: 1.5, repeat: Infinity, ease: "easeOut" }}
+                  animate={{ scale: [1, 1.6], opacity: [0, 0.45, 0] }}
+                  transition={{
+                    duration: 1.8,
+                    repeat: Infinity,
+                    ease: "easeOut",
+                    times: [0, 0.3, 1],
+                  }}
                   className="absolute inset-0 rounded-full bg-blue-400 pointer-events-none"
                 />
                 <motion.div
-                  animate={{ scale: [1, 1.5], opacity: [0.4, 0] }}
-                  transition={{ duration: 1.5, repeat: Infinity, ease: "easeOut", delay: 0.75 }}
+                  animate={{ scale: [1, 1.6], opacity: [0, 0.45, 0] }}
+                  transition={{
+                    duration: 1.8,
+                    repeat: Infinity,
+                    ease: "easeOut",
+                    times: [0, 0.3, 1],
+                    delay: 0.9,
+                  }}
                   className="absolute inset-0 rounded-full bg-blue-400 pointer-events-none"
                 />
               </>
