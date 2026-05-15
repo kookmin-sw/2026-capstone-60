@@ -9,7 +9,7 @@
  *   - SYSTEM 로그는 컨테이너에서 미리 필터링되어 들어옴
  */
 import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Mic, MicOff, ChevronRight, Square, Wifi, WifiOff, Video, VideoOff, Clock } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -71,23 +71,93 @@ export default function InterviewRoomView({
   ending = false,
 
   eventLog = [],
+
+  // 배경 블롭 애니메이션 상태.
+  // 현재는 2-state ("generating" / "answering") 만 사용. 추후 LiveKit audio
+  // 트랙 감지로 "speaking" 분리 가능하도록 인터페이스만 3-state 로 열어둔다.
+  ambientState = "answering",
 }) {
   // 카메라 미리보기 토글 (사용자가 끄고 켤 수 있음)
   const [cameraOn, setCameraOn] = useState(true);
 
+  // prefers-reduced-motion 사용자에게는 모션 없이 정적 배경만 노출
+  const reduceMotion = useReducedMotion();
+
+  // 블롭 애니메이션 variants (좌상단 yellow / 우하단 blue)
+  // x/y 는 viewport 단위라 화면 크기와 무관하게 중앙으로 모임.
+  const yellowAnimate = reduceMotion
+    ? { x: 0, y: 0, scale: 1, opacity: 0.5 }
+    : ambientState === "generating"
+      ? { x: "28vw", y: "22vh", scale: [1, 1.12, 1], opacity: [0.5, 0.85, 0.5] }
+      : ambientState === "speaking"
+        ? { x: "10vw", y: "8vh", scale: [1, 1.04, 1], opacity: [0.5, 0.65, 0.5] }
+        : { x: 0, y: 0, scale: 1, opacity: 0.5 };
+
+  const blueAnimate = reduceMotion
+    ? { x: 0, y: 0, scale: 1, opacity: 0.4 }
+    : ambientState === "generating"
+      ? { x: "-28vw", y: "-22vh", scale: [1, 1.12, 1], opacity: [0.4, 0.75, 0.4] }
+      : ambientState === "speaking"
+        ? { x: "-10vw", y: "-8vh", scale: [1, 1.04, 1], opacity: [0.4, 0.55, 0.4] }
+        : { x: 0, y: 0, scale: 1, opacity: 0.4 };
+
+  // 모션 사이클: generating 빠른 박동, speaking 잔잔한 호흡, answering 정적
+  const blobTransition =
+    reduceMotion || ambientState === "answering"
+      ? { duration: 1, ease: "easeOut" }
+      : ambientState === "generating"
+        ? {
+            x: { duration: 0.9, ease: "easeOut" },
+            y: { duration: 0.9, ease: "easeOut" },
+            scale: { duration: 1.3, repeat: Infinity, ease: "easeInOut" },
+            opacity: { duration: 1.3, repeat: Infinity, ease: "easeInOut" },
+          }
+        : {
+            x: { duration: 1.2, ease: "easeOut" },
+            y: { duration: 1.2, ease: "easeOut" },
+            scale: { duration: 3.5, repeat: Infinity, ease: "easeInOut" },
+            opacity: { duration: 3.5, repeat: Infinity, ease: "easeInOut" },
+          };
+
   return (
     <div className="fixed inset-0 w-screen h-screen bg-slate-100 flex flex-col overflow-hidden z-40">
-      {/* Subtle Grid Background */}
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          backgroundImage: `
-            linear-gradient(to right, rgb(203 213 225 / 0.4) 1px, transparent 1px),
-            linear-gradient(to bottom, rgb(203 213 225 / 0.4) 1px, transparent 1px)
-          `,
-          backgroundSize: '24px 24px',
-        }}
+      {/* Aurora Blobs (ambientState 에 따라 위치/박동/투명도 변화) */}
+      <motion.div
+        className="absolute -top-64 -left-64 w-[760px] h-[760px] rounded-full bg-yellow-400 pointer-events-none"
+        style={{ filter: 'blur(110px)', willChange: 'transform, opacity', transform: 'translateZ(0)' }}
+        animate={yellowAnimate}
+        transition={blobTransition}
       />
+      <motion.div
+        className="absolute -bottom-64 -right-64 w-[760px] h-[760px] rounded-full bg-blue-500 pointer-events-none"
+        style={{ filter: 'blur(110px)', willChange: 'transform, opacity', transform: 'translateZ(0)' }}
+        animate={blueAnimate}
+        transition={blobTransition}
+      />
+
+      {/* Concentric Circle Strokes */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden">
+        <div
+          className="absolute rounded-full border border-slate-400/15"
+          style={{ width: '170vmin', height: '170vmin' }}
+        />
+        <div
+          className="absolute rounded-full border border-slate-400/25"
+          style={{ width: '135vmin', height: '135vmin' }}
+        />
+        <div
+          className="absolute rounded-full border border-slate-400/30"
+          style={{ width: '100vmin', height: '100vmin' }}
+        />
+        <div
+          className="absolute rounded-full border border-slate-400/35"
+          style={{ width: '70vmin', height: '70vmin' }}
+        />
+        <div
+          className="absolute rounded-full border border-slate-400/40"
+          style={{ width: '45vmin', height: '45vmin' }}
+        />
+      </div>
 
       {/* Status Bar */}
       <motion.header
