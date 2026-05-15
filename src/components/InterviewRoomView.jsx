@@ -417,7 +417,7 @@ export default function InterviewRoomView({
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: "easeOut", delay: 0.3 }}
-        className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 w-full max-w-2xl px-4"
+        className="absolute bottom-6 left-[calc(50%-150px)] -translate-x-1/2 z-20 w-full max-w-2xl px-4"
       >
         <div className="flex items-center justify-center gap-4 px-6 py-4 bg-white/85 border border-slate-200/80 rounded-2xl shadow-lg shadow-slate-200/60">
           {/* Mic Toggle */}
