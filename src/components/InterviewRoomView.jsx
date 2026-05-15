@@ -297,9 +297,9 @@ export default function InterviewRoomView({
           initial={{ opacity: 0, x: 16 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.4, ease: "easeOut", delay: 0.2 }}
-          className="w-[300px] flex p-4 pl-0"
+          className="w-[300px] bg-white border-l border-slate-200 flex flex-col"
         >
-          <div className="flex-1 flex flex-col min-h-0 bg-white rounded-2xl shadow-lg shadow-slate-200/80 border border-slate-200 overflow-hidden">
+          <div className="flex-1 flex flex-col min-h-0">
             <div className="px-4 py-3 border-b border-slate-200">
               <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">진행 로그</h3>
             </div>
