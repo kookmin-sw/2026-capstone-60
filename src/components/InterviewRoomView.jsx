@@ -164,7 +164,7 @@ export default function InterviewRoomView({
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, ease: "easeOut" }}
-        className="relative flex items-center justify-between px-5 py-3 bg-white border-b border-slate-200 z-10"
+        className="relative flex items-center justify-between px-5 py-3 bg-white/85 border-b border-slate-200/80 z-10"
       >
         {/* Left: Connection Status & Session ID */}
         <div className="flex items-center gap-3">
@@ -225,7 +225,7 @@ export default function InterviewRoomView({
             transition={{ duration: 0.4, ease: "easeOut", delay: 0.1 }}
             className="w-full flex"
           >
-            <div className="w-full bg-white rounded-2xl shadow-lg shadow-slate-200/80 border border-slate-200 overflow-hidden flex">
+            <div className="w-full bg-white/85 rounded-2xl shadow-lg shadow-slate-200/60 border border-slate-200/80 overflow-hidden flex">
               {/* Blue Left Border Accent */}
               <div className="w-1 bg-blue-600 shrink-0" />
 
@@ -367,7 +367,7 @@ export default function InterviewRoomView({
           initial={{ opacity: 0, x: 16 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.4, ease: "easeOut", delay: 0.2 }}
-          className="w-[300px] bg-white border-l border-slate-200 flex flex-col"
+          className="w-[300px] bg-white/85 border-l border-slate-200/80 flex flex-col"
         >
           <div className="flex-1 flex flex-col min-h-0">
             <div className="px-4 py-3 border-b border-slate-200">
@@ -419,7 +419,7 @@ export default function InterviewRoomView({
         transition={{ duration: 0.4, ease: "easeOut", delay: 0.3 }}
         className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 w-full max-w-2xl px-4"
       >
-        <div className="flex items-center justify-center gap-4 px-6 py-4 bg-white border border-slate-200 rounded-2xl shadow-lg shadow-slate-200/80">
+        <div className="flex items-center justify-center gap-4 px-6 py-4 bg-white/85 border border-slate-200/80 rounded-2xl shadow-lg shadow-slate-200/60">
           {/* Mic Toggle */}
           <div className="relative">
             {isMicOn && (
