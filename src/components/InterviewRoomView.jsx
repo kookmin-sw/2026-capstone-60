@@ -8,9 +8,8 @@
  *   - 최상위 div: h-screen → fixed inset-0 (부모 chain 의 height 영향 차단)
  *   - SYSTEM 로그는 컨테이너에서 미리 필터링되어 들어옴
  */
-import { useState } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { Mic, MicOff, ChevronRight, Square, Wifi, WifiOff, Video, VideoOff, Clock } from "lucide-react";
+import { Mic, MicOff, ChevronRight, Square, Wifi, WifiOff, Clock } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { cn } from "@/lib/utils";
@@ -21,9 +20,9 @@ const TURN_LABEL = {
   waiting: "대기 중",
 };
 const TURN_STYLE = {
-  user:    "border-blue-200 text-blue-600 bg-blue-50",
-  ai:      "border-emerald-200 text-emerald-600 bg-emerald-50",
-  waiting: "border-slate-200 text-slate-500 bg-slate-50",
+  user:    "border-2 border-white/90 text-blue-600 bg-white/40 backdrop-blur-md",
+  ai:      "border-2 border-white/90 text-emerald-600 bg-white/40 backdrop-blur-md",
+  waiting: "border-2 border-white/90 text-slate-500 bg-white/40 backdrop-blur-md",
 };
 const LOG_LABEL = {
   AI: "면접관", QUESTION: "면접관",
@@ -77,28 +76,28 @@ export default function InterviewRoomView({
   // 트랙 감지로 "speaking" 분리 가능하도록 인터페이스만 3-state 로 열어둔다.
   ambientState = "answering",
 }) {
-  // 카메라 미리보기 토글 (사용자가 끄고 켤 수 있음)
-  const [cameraOn, setCameraOn] = useState(true);
-
   // prefers-reduced-motion 사용자에게는 모션 없이 정적 배경만 노출
   const reduceMotion = useReducedMotion();
 
-  // 블롭 애니메이션 variants (좌상단 yellow / 우하단 blue)
+  // 블롭 애니메이션 variants (우상단 yellow / 좌하단 blue)
   // x/y 는 viewport 단위라 화면 크기와 무관하게 중앙으로 모임.
+  // answering(사용자 답변) 상태에서 노란 블롭이 질문 텍스트를 가리지 않도록
+  // base 위치를 좌→우 대칭 배치하고, generating/speaking 시 중앙으로 모이는
+  // x 방향도 따라 뒤집는다.
   const yellowAnimate = reduceMotion
     ? { x: 0, y: 0, scale: 1, opacity: 0.5 }
     : ambientState === "generating"
-      ? { x: "28vw", y: "22vh", scale: [1, 1.12, 1], opacity: [0.5, 0.85, 0.5] }
+      ? { x: "-28vw", y: "22vh", scale: [1, 1.12, 1], opacity: [0.5, 0.25, 0.5] }
       : ambientState === "speaking"
-        ? { x: "10vw", y: "8vh", scale: [1, 1.04, 1], opacity: [0.5, 0.65, 0.5] }
+        ? { x: "-10vw", y: "8vh", scale: [1, 1.04, 1], opacity: [0.5, 0.65, 0.5] }
         : { x: 0, y: 0, scale: 1, opacity: 0.5 };
 
   const blueAnimate = reduceMotion
     ? { x: 0, y: 0, scale: 1, opacity: 0.4 }
     : ambientState === "generating"
-      ? { x: "-28vw", y: "-22vh", scale: [1, 1.12, 1], opacity: [0.4, 0.75, 0.4] }
+      ? { x: "28vw", y: "-22vh", scale: [1, 1.12, 1], opacity: [0.4, 0.2, 0.4] }
       : ambientState === "speaking"
-        ? { x: "-10vw", y: "-8vh", scale: [1, 1.04, 1], opacity: [0.4, 0.55, 0.4] }
+        ? { x: "10vw", y: "-8vh", scale: [1, 1.04, 1], opacity: [0.4, 0.55, 0.4] }
         : { x: 0, y: 0, scale: 1, opacity: 0.4 };
 
   // 모션 사이클: generating 빠른 박동, speaking 잔잔한 호흡, answering 정적
@@ -123,13 +122,13 @@ export default function InterviewRoomView({
     <div className="fixed inset-0 w-screen h-screen bg-slate-100 flex flex-col overflow-hidden z-40">
       {/* Aurora Blobs (ambientState 에 따라 위치/박동/투명도 변화) */}
       <motion.div
-        className="absolute -top-64 -left-64 w-[760px] h-[760px] rounded-full bg-yellow-400 pointer-events-none"
+        className="absolute -top-64 -right-64 w-[760px] h-[760px] rounded-full bg-yellow-300 pointer-events-none"
         style={{ filter: 'blur(110px)', willChange: 'transform, opacity', transform: 'translateZ(0)' }}
         animate={yellowAnimate}
         transition={blobTransition}
       />
       <motion.div
-        className="absolute -bottom-64 -right-64 w-[760px] h-[760px] rounded-full bg-blue-500 pointer-events-none"
+        className="absolute -bottom-64 -left-64 w-[760px] h-[760px] rounded-full bg-blue-500 pointer-events-none"
         style={{ filter: 'blur(110px)', willChange: 'transform, opacity', transform: 'translateZ(0)' }}
         animate={blueAnimate}
         transition={blobTransition}
@@ -164,7 +163,7 @@ export default function InterviewRoomView({
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, ease: "easeOut" }}
-        className="relative flex items-center justify-between px-5 py-3 bg-white/85 border-b border-slate-200/80 z-10"
+        className="relative flex items-center justify-between px-5 py-3 bg-white/65 backdrop-blur-2xl backdrop-saturate-150 border-b-[3px] border-white/90 z-10"
       >
         {/* Left: Connection Status & Session ID */}
         <div className="flex items-center gap-3">
@@ -218,29 +217,26 @@ export default function InterviewRoomView({
       {/* Main Content */}
       <div className="flex-1 flex relative z-10 min-h-0">
         {/* Question Card Area */}
-        <div className="flex-1 flex items-stretch p-4 pb-32 min-w-0">
+        <div className="flex-1 flex items-stretch px-10 pt-10 pb-40 min-w-0">
           <motion.div
             initial={{ opacity: 0, scale: 0.98 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.4, ease: "easeOut", delay: 0.1 }}
             className="w-full flex"
           >
-            <div className="w-full bg-white/85 rounded-2xl shadow-lg shadow-slate-200/60 border border-slate-200/80 overflow-hidden flex">
-              {/* Blue Left Border Accent */}
-              <div className="w-1 bg-blue-600 shrink-0" />
-
+            <div className="w-full bg-white/40 backdrop-blur-2xl backdrop-saturate-150 rounded-2xl shadow-2xl shadow-blue-900/15 border-[3px] border-white/90 overflow-hidden flex">
               <div className="flex-1 p-8 flex flex-col">
                 {/* Top Row */}
                 <div className="flex items-center justify-between mb-6">
                   <Badge
                     variant="secondary"
-                    className="bg-blue-50 text-blue-600 font-semibold text-[11px] tracking-wider uppercase border-0 px-3 py-1"
+                    className="bg-white/40 backdrop-blur-md text-blue-600 font-semibold text-sm tracking-wider uppercase border-2 border-white/90 px-5 py-2"
                   >
                     질문 {String(questionNumber).padStart(2, "0")}
                   </Badge>
                   <Badge
                     variant="outline"
-                    className={cn("text-xs font-semibold px-3 py-1", TURN_STYLE[currentTurn])}
+                    className={cn("text-sm font-semibold px-5 py-2", TURN_STYLE[currentTurn])}
                   >
                     {TURN_LABEL[currentTurn]}
                   </Badge>
@@ -285,58 +281,19 @@ export default function InterviewRoomView({
 
                 {/* Timer & Progress + Camera */}
                 <div className="mt-auto">
-                  <div className="flex items-end justify-between mb-5">
-                    <div className="flex items-baseline gap-3">
-                      <motion.span
-                        key={answerTimeRemaining}
-                        initial={{ scale: 1.02 }}
-                        animate={{ scale: 1 }}
-                        className={cn(
-                          "font-[family-name:var(--font-jetbrains)] text-[68px] font-bold tabular-nums tracking-tighter leading-none",
-                          isUnderTen ? "text-rose-500" : "text-slate-800"
-                        )}
-                      >
-                        {showAnswerTimer ? answerTimeRemaining : "--:--"}
-                      </motion.span>
-                      <span className="text-sm text-slate-400 font-medium mb-2">남은 시간</span>
-                    </div>
-
-                    {/* 카메라 미리보기 — 카드 안 우하단 */}
-                    <div className="flex flex-col items-end gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setCameraOn((v) => !v)}
-                        className={cn(
-                          "flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold border transition-colors cursor-pointer",
-                          cameraOn
-                            ? "bg-blue-50 border-blue-200 text-blue-600 hover:bg-blue-100"
-                            : "bg-slate-100 border-slate-300 text-slate-600 hover:bg-slate-200"
-                        )}
-                      >
-                        {cameraOn ? <Video className="size-3" /> : <VideoOff className="size-3" />}
-                        {cameraOn ? "켜짐" : "꺼짐"}
-                      </button>
-                      <div className="relative w-44 h-28 bg-slate-900 rounded-lg border border-slate-700 overflow-hidden">
-                        {cameraOn ? (
-                          <>
-                            <div className="absolute inset-0 flex items-center justify-center">
-                              <div className="text-center">
-                                <Video className="size-6 text-slate-500 mx-auto mb-1" />
-                                <span className="text-[9px] text-slate-500 font-medium">미리보기</span>
-                              </div>
-                            </div>
-                            <div className="absolute top-1.5 right-1.5 flex items-center gap-1 px-1.5 py-0.5 bg-red-500/90 rounded-full">
-                              <span className="size-1 bg-white rounded-full animate-pulse" />
-                              <span className="text-[8px] text-white font-bold">REC</span>
-                            </div>
-                          </>
-                        ) : (
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <VideoOff className="size-6 text-slate-600" />
-                          </div>
-                        )}
-                      </div>
-                    </div>
+                  <div className="flex flex-col items-center mb-5">
+                    <motion.span
+                      key={answerTimeRemaining}
+                      initial={{ scale: 1.02 }}
+                      animate={{ scale: 1 }}
+                      className={cn(
+                        "font-[family-name:var(--font-jetbrains)] text-[68px] font-bold tabular-nums tracking-tighter leading-none",
+                        isUnderTen ? "text-rose-500" : "text-slate-800"
+                      )}
+                    >
+                      {showAnswerTimer ? answerTimeRemaining : "--:--"}
+                    </motion.span>
+                    <span className="text-sm text-slate-400 font-medium mt-1">남은 시간</span>
                   </div>
 
                   <div className="relative">
@@ -367,14 +324,14 @@ export default function InterviewRoomView({
           initial={{ opacity: 0, x: 16 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.4, ease: "easeOut", delay: 0.2 }}
-          className="w-[300px] bg-white/85 border-l border-slate-200/80 flex flex-col"
+          className="w-[300px] mt-10 mr-10 mb-10 bg-white/40 backdrop-blur-2xl backdrop-saturate-150 border-[3px] border-white/90 rounded-2xl shadow-2xl shadow-blue-900/15 flex flex-col overflow-hidden"
         >
           <div className="flex-1 flex flex-col min-h-0">
-            <div className="px-4 py-3 border-b border-slate-200">
+            <div className="px-4 py-3 border-b border-white/30">
               <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">진행 로그</h3>
             </div>
             <div className="flex-1 overflow-y-auto px-3 py-2">
-              <div className="space-y-1">
+              <div>
                 {eventLog.length === 0 ? (
                   <p className="text-xs text-slate-400 px-2 py-3">아직 이벤트가 없습니다.</p>
                 ) : (
@@ -385,23 +342,24 @@ export default function InterviewRoomView({
                         initial={{ opacity: 0, x: 8 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ duration: 0.2, delay: index * 0.02 }}
-                        className={cn(
-                          "flex items-start gap-2 p-2 rounded-lg",
-                          LOG_BG_COLOR[entry.type] || "bg-slate-100"
-                        )}
                       >
-                        <span className={cn(
-                          "shrink-0 font-semibold text-[11px] w-10 text-center",
-                          LOG_TEXT_COLOR[entry.type] || "text-slate-500"
-                        )}>
-                          {LOG_LABEL[entry.type] || entry.type}
-                        </span>
-                        <span className="text-slate-700 leading-relaxed flex-1 text-xs font-medium min-w-0 break-words">
-                          {entry.text}
-                        </span>
-                        <span className="font-[family-name:var(--font-jetbrains)] text-slate-500 shrink-0 text-[10px]">
-                          {entry.timestamp}
-                        </span>
+                        <div className="flex items-start gap-2 p-2">
+                          <span className={cn(
+                            "shrink-0 font-semibold text-[11px] w-10 text-center",
+                            LOG_TEXT_COLOR[entry.type] || "text-slate-500"
+                          )}>
+                            {LOG_LABEL[entry.type] || entry.type}
+                          </span>
+                          <span className="text-slate-700 leading-relaxed flex-1 text-xs font-medium min-w-0 break-words">
+                            {entry.text}
+                          </span>
+                          <span className="font-[family-name:var(--font-jetbrains)] text-slate-500 shrink-0 text-[10px]">
+                            {entry.timestamp}
+                          </span>
+                        </div>
+                        {index < eventLog.length - 1 && (
+                          <div className="mx-2 h-[2px] rounded-full bg-gradient-to-r from-transparent via-black/15 to-transparent" />
+                        )}
                       </motion.div>
                     ))}
                   </AnimatePresence>
@@ -417,9 +375,31 @@ export default function InterviewRoomView({
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: "easeOut", delay: 0.3 }}
-        className="absolute bottom-6 left-[calc(50%-150px)] -translate-x-1/2 z-20 w-full max-w-2xl px-4"
+        className="absolute bottom-10 left-10 right-[380px] z-20"
       >
-        <div className="flex items-center justify-center gap-4 px-6 py-4 bg-white/85 border border-slate-200/80 rounded-2xl shadow-lg shadow-slate-200/60">
+        <div className="flex items-center justify-center gap-4 px-6 py-4 bg-white/40 backdrop-blur-3xl backdrop-saturate-200 border-[3px] border-white/90 rounded-2xl shadow-2xl shadow-blue-900/20">
+          {/* End Interview */}
+          <Button
+            variant="ghost"
+            onClick={onEndInterview}
+            disabled={ending}
+            className="rounded-xl px-8 h-14 text-rose-500 hover:bg-rose-50 hover:text-rose-600 gap-2 font-medium"
+          >
+            {ending ? (
+              <>
+                <span className="w-4 h-4 border-2 border-rose-300 border-t-rose-500 rounded-full animate-spin" />
+                <span className="text-sm">종료 중</span>
+              </>
+            ) : (
+              <>
+                <Square className="size-4 fill-current" />
+                <span className="text-sm">면접 종료</span>
+              </>
+            )}
+          </Button>
+
+          <div className="w-px h-10 bg-slate-200" />
+
           {/* Mic Toggle */}
           <div className="relative">
             {isMicOn && (
@@ -480,28 +460,6 @@ export default function InterviewRoomView({
               <>
                 <span className="text-sm">다음 질문</span>
                 <ChevronRight className="size-4" />
-              </>
-            )}
-          </Button>
-
-          <div className="w-px h-10 bg-slate-200" />
-
-          {/* End Interview */}
-          <Button
-            variant="ghost"
-            onClick={onEndInterview}
-            disabled={ending}
-            className="rounded-xl px-8 h-14 text-rose-500 hover:bg-rose-50 hover:text-rose-600 gap-2 font-medium"
-          >
-            {ending ? (
-              <>
-                <span className="w-4 h-4 border-2 border-rose-300 border-t-rose-500 rounded-full animate-spin" />
-                <span className="text-sm">종료 중</span>
-              </>
-            ) : (
-              <>
-                <Square className="size-4 fill-current" />
-                <span className="text-sm">면접 종료</span>
               </>
             )}
           </Button>
