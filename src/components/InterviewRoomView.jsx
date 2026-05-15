@@ -360,8 +360,8 @@ export default function InterviewRoomView({
                   className="absolute inset-0 rounded-full bg-blue-400 pointer-events-none"
                 />
                 <motion.div
-                  animate={{ scale: [1, 1.3], opacity: [0.3, 0] }}
-                  transition={{ duration: 1.5, repeat: Infinity, ease: "easeOut", delay: 0.3 }}
+                  animate={{ scale: [1, 1.5], opacity: [0.4, 0] }}
+                  transition={{ duration: 1.5, repeat: Infinity, ease: "easeOut", delay: 0.75 }}
                   className="absolute inset-0 rounded-full bg-blue-400 pointer-events-none"
                 />
               </>
