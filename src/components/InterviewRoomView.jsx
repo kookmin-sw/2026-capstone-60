@@ -224,7 +224,7 @@ export default function InterviewRoomView({
             transition={{ duration: 0.4, ease: "easeOut", delay: 0.1 }}
             className="w-full flex"
           >
-            <div className="w-full bg-white/40 backdrop-blur-2xl backdrop-saturate-150 rounded-2xl shadow-2xl shadow-blue-900/15 border-[3px] border-white/90 overflow-hidden flex">
+            <div className="w-full bg-white/20 backdrop-blur-2xl backdrop-saturate-150 rounded-2xl shadow-2xl shadow-blue-900/15 border-[3px] border-white/90 overflow-hidden flex" style={{ outline: '1.5px solid rgba(255,255,255,0.6)', outlineOffset: '-6px' }}>
               <div className="flex-1 p-8 flex flex-col">
                 {/* Top Row */}
                 <div className="flex items-center justify-between mb-6">
@@ -279,9 +279,9 @@ export default function InterviewRoomView({
                 {/* Spacer */}
                 <div className="flex-1" />
 
-                {/* Timer & Progress + Camera */}
-                <div className="mt-auto">
-                  <div className="flex flex-col items-center mb-5">
+                {/* Timer & Progress */}
+                <div className="mt-auto mb-12">
+                  <div className="flex flex-col items-center mb-8">
                     <motion.span
                       key={answerTimeRemaining}
                       initial={{ scale: 1.02 }}
@@ -324,7 +324,8 @@ export default function InterviewRoomView({
           initial={{ opacity: 0, x: 16 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.4, ease: "easeOut", delay: 0.2 }}
-          className="w-[300px] mt-10 mr-10 mb-10 bg-white/40 backdrop-blur-2xl backdrop-saturate-150 border-[3px] border-white/90 rounded-2xl shadow-2xl shadow-blue-900/15 flex flex-col overflow-hidden"
+          className="w-[300px] mt-10 mr-10 mb-10 bg-white/20 backdrop-blur-2xl backdrop-saturate-150 border-[3px] border-white/90 rounded-2xl shadow-2xl shadow-blue-900/15 flex flex-col overflow-hidden"
+          style={{ outline: '1.5px solid rgba(255,255,255,0.6)', outlineOffset: '-6px' }}
         >
           <div className="flex-1 flex flex-col min-h-0">
             <div className="px-4 py-3 border-b border-white/30">
@@ -377,7 +378,7 @@ export default function InterviewRoomView({
         transition={{ duration: 0.4, ease: "easeOut", delay: 0.3 }}
         className="absolute bottom-10 left-10 right-[380px] z-20"
       >
-        <div className="flex items-center justify-center gap-4 px-6 py-4 bg-white/40 backdrop-blur-3xl backdrop-saturate-200 border-[3px] border-white/90 rounded-2xl shadow-2xl shadow-blue-900/20">
+        <div className="flex items-center justify-center gap-10 px-6 py-4 bg-white/20 backdrop-blur-3xl backdrop-saturate-200 border-[3px] border-white/90 rounded-2xl shadow-2xl shadow-blue-900/20" style={{ outline: '1.5px solid rgba(255,255,255,0.6)', outlineOffset: '-6px' }}>
           {/* End Interview */}
           <Button
             variant="ghost"
@@ -397,8 +398,6 @@ export default function InterviewRoomView({
               </>
             )}
           </Button>
-
-          <div className="w-px h-10 bg-slate-200" />
 
           {/* Mic Toggle */}
           <div className="relative">
@@ -441,8 +440,6 @@ export default function InterviewRoomView({
               {isMicOn ? <Mic className="size-6" /> : <MicOff className="size-6" />}
             </Button>
           </div>
-
-          <div className="w-px h-10 bg-slate-200" />
 
           {/* Next Question */}
           <Button
