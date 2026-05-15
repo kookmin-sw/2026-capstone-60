@@ -210,6 +210,10 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
     if (!nextGuard.tryAcquire()) return;
     setNextLoading(true);
     setCurrentTurnRole("ai");
+    // 다음 질문이 발화될 때까지 화면을 "대기" 상태로 (질문 텍스트 비우고 타이머 --:--)
+    setCurrentQuestion("");
+    setAnswerExpiresAt(null);
+    setWarningVisible(false);
 
     try {
       const response = await nextQuestion(session.sessionId, turnRef.current);
@@ -219,24 +223,26 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
       if (session.livekit?.isMock) {
         setCurrentQuestion(`Mock 질문 ${data.turnNumber}: 다음 질문입니다.`);
         setCurrentTurnRole("user");
-      }
 
-      let nextDeadline = Date.now() + answerTimeLimitSeconds * 1000;
-      if (data.expiresAt) {
-        const parsed = new Date(data.expiresAt).getTime();
-        const ms = parsed - Date.now();
-        if (ms > EXPIRES_AT_FALLBACK_THRESHOLD_MS) {
-          nextDeadline = parsed;
-        } else {
-          console.warn(`[InterviewRoom] 비정상 expiresAt 수신 (남은 ms=${ms}).`);
-          addLog("WARN", `서버 타이머가 비정상입니다. 답변 시간을 ${answerTimeLimitSeconds}초로 재설정했습니다.`);
+        let nextDeadline = Date.now() + answerTimeLimitSeconds * 1000;
+        if (data.expiresAt) {
+          const parsed = new Date(data.expiresAt).getTime();
+          const ms = parsed - Date.now();
+          if (ms > EXPIRES_AT_FALLBACK_THRESHOLD_MS) {
+            nextDeadline = parsed;
+          } else {
+            console.warn(`[InterviewRoom] 비정상 expiresAt 수신 (남은 ms=${ms}).`);
+            addLog("WARN", `서버 타이머가 비정상입니다. 답변 시간을 ${answerTimeLimitSeconds}초로 재설정했습니다.`);
+          }
         }
+        setAnswerExpiresAt(nextDeadline);
       }
-      setAnswerExpiresAt(nextDeadline);
-      setWarningVisible(false);
+      // 실제 모드: 답변 타이머는 Agent의 QUESTION 데이터 메시지 수신 시
+      // handleDataReceived 에서 expiresAt 을 설정하므로 여기서는 건드리지 않는다.
       addLog("SYSTEM", `다음 질문을 요청했습니다. (턴 ${data.turnNumber})`);
     } catch (err) {
       addLog("SYSTEM", `다음 질문 요청 실패: ${err.message}`);
+      // 실패 시에는 답변을 계속 받을 수 있도록 타이머 복구
       setAnswerExpiresAt(Date.now() + answerTimeLimitSeconds * 1000);
     } finally {
       setNextLoading(false);

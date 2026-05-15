@@ -38,8 +38,8 @@ const LOG_TEXT_COLOR = {
   ERROR: "text-rose-500",
 };
 const LOG_BG_COLOR = {
-  AI: "bg-emerald-50", QUESTION: "bg-emerald-50",
-  USER: "bg-blue-50",
+  AI: "bg-sky-50", QUESTION: "bg-sky-50",
+  USER: "bg-emerald-50",
   ALERT: "bg-rose-50", WARN: "bg-amber-50",
   ERROR: "bg-rose-50",
 };
@@ -94,7 +94,7 @@ export default function InterviewRoomView({
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, ease: "easeOut" }}
-        className="relative flex items-center justify-between px-5 py-3 bg-slate-100/90 border-b border-slate-200 z-10"
+        className="relative flex items-center justify-between px-5 py-3 bg-white border-b border-slate-200 z-10"
       >
         {/* Left: Connection Status & Session ID */}
         <div className="flex items-center gap-3">
@@ -297,7 +297,7 @@ export default function InterviewRoomView({
           initial={{ opacity: 0, x: 16 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.4, ease: "easeOut", delay: 0.2 }}
-          className="w-[300px] bg-slate-100 border-l border-slate-200 flex flex-col shadow-[-4px_0_20px_rgba(15,40,100,.06)]"
+          className="w-[300px] bg-white border-l border-slate-200 flex flex-col"
         >
           <div className="flex-1 flex flex-col min-h-0">
             <div className="px-4 py-3 border-b border-slate-200">
@@ -349,19 +349,30 @@ export default function InterviewRoomView({
         transition={{ duration: 0.4, ease: "easeOut", delay: 0.3 }}
         className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 w-full max-w-2xl px-4"
       >
-        <div className="flex items-center justify-center gap-4 px-6 py-4 bg-slate-100 border border-slate-200 rounded-2xl shadow-xl shadow-slate-200/60">
+        <div className="flex items-center justify-center gap-4 px-6 py-4 bg-white border border-slate-200 rounded-2xl shadow-lg shadow-slate-200/80">
           {/* Mic Toggle */}
           <div className="relative">
             {isMicOn && (
               <>
                 <motion.div
-                  animate={{ scale: [1, 1.5], opacity: [0.4, 0] }}
-                  transition={{ duration: 1.5, repeat: Infinity, ease: "easeOut" }}
+                  animate={{ scale: [1, 1.6], opacity: [0, 0.45, 0] }}
+                  transition={{
+                    duration: 1.8,
+                    repeat: Infinity,
+                    ease: "easeOut",
+                    times: [0, 0.3, 1],
+                  }}
                   className="absolute inset-0 rounded-full bg-blue-400 pointer-events-none"
                 />
                 <motion.div
-                  animate={{ scale: [1, 1.3], opacity: [0.3, 0] }}
-                  transition={{ duration: 1.5, repeat: Infinity, ease: "easeOut", delay: 0.3 }}
+                  animate={{ scale: [1, 1.6], opacity: [0, 0.45, 0] }}
+                  transition={{
+                    duration: 1.8,
+                    repeat: Infinity,
+                    ease: "easeOut",
+                    times: [0, 0.3, 1],
+                    delay: 0.9,
+                  }}
                   className="absolute inset-0 rounded-full bg-blue-400 pointer-events-none"
                 />
               </>
