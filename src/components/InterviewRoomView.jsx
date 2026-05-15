@@ -38,8 +38,8 @@ const LOG_TEXT_COLOR = {
   ERROR: "text-rose-500",
 };
 const LOG_BG_COLOR = {
-  AI: "bg-emerald-50", QUESTION: "bg-emerald-50",
-  USER: "bg-blue-50",
+  AI: "bg-sky-50", QUESTION: "bg-sky-50",
+  USER: "bg-emerald-50",
   ALERT: "bg-rose-50", WARN: "bg-amber-50",
   ERROR: "bg-rose-50",
 };
