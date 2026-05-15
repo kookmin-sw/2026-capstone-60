@@ -32,16 +32,16 @@ const LOG_LABEL = {
   ERROR: "오류",
 };
 const LOG_TEXT_COLOR = {
-  AI: "text-blue-600", QUESTION: "text-blue-600",
-  USER: "text-emerald-600",
+  AI: "text-blue-700", QUESTION: "text-blue-700",
+  USER: "text-emerald-700",
   ALERT: "text-rose-500", WARN: "text-amber-600",
   ERROR: "text-rose-500",
 };
 const LOG_BG_COLOR = {
-  AI: "bg-sky-50", QUESTION: "bg-sky-50",
-  USER: "bg-emerald-50",
-  ALERT: "bg-rose-50", WARN: "bg-amber-50",
-  ERROR: "bg-rose-50",
+  AI: "bg-sky-50/60", QUESTION: "bg-sky-50/60",
+  USER: "bg-amber-50/60",
+  ALERT: "bg-rose-50/60", WARN: "bg-amber-50/60",
+  ERROR: "bg-rose-50/60",
 };
 
 export default function InterviewRoomView({
