@@ -311,6 +311,12 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
   // ── 메인 면접 화면: View 에 props 주입 ────────────────────
   const visibleLogs = logs.filter((l) => !HIDDEN_LOG_TYPES.has(l.type));
 
+  // 배경 블롭 ambient 상태.
+  // 현재 데이터 모델에서는 LLM 생성 / TTS 발화 구분이 불가능 (INTEGRATION_CONTRACT §3.5
+  // 에 따라 텍스트는 TTS 종료 후 한 번에 도착) 이므로 두 단계를 generating 으로 통합한다.
+  // 추후 LiveKit ActiveSpeakers 감지로 speaking 분리 시 이 곳만 수정하면 된다.
+  const ambientState = currentTurnRole === "ai" ? "generating" : "answering";
+
   return (
     <InterviewRoomView
       isConnected={isConnected}
@@ -339,6 +345,8 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
       ending={ending}
 
       eventLog={visibleLogs}
+
+      ambientState={ambientState}
     />
   );
 }
