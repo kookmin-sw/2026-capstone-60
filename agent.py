@@ -7,12 +7,11 @@ AI 모의면접 LiveKit Agent.
 책임 범위:
 - LiveKit 파이프라인(STT/턴감지/TTS) 세팅 — STT/TTS 는 LiveKit Inference 사용
 - LLM 호출은 Bedrock 직접 (boto3) — ai/llm_service.py
-- 사용자 답변을 LLM 에 전달하고, 생성된 질문을 TTS 로 발화
+- 사용자 답변을 요약/판단한 뒤, 생성된 질문을 TTS 로 발화
 
 하지 않는 일:
 - HTTP 서버 노출 (Agent 는 Worker 이지 HTTP 서버가 아님)
 - DB 저장 (나중에 Spring API 호출로 추가 가능)
-- 꼬리질문 여부 판단 (기본은 새 주제 질문. 판단 AI 추가 시 FOLLOW_UP 분기)
 
 실행:
     python agent.py console    # 로컬 터미널에서 음성 대화 테스트
@@ -229,13 +228,45 @@ class InterviewerAgent(Agent):
         except Exception as e:
             logger.warning("[QUESTION publish 실패] %s — 음성은 이미 전달됨, 면접 계속", e)
 
+    async def _choose_next_question(self) -> tuple[dict[str, str], bool]:
+        """마지막 답변을 요약/판단한 뒤 FOLLOW_UP 또는 NEXT_QUESTION 으로 분기한다."""
+        last_turn = self.interview.history[-1] if self.interview.history else None
+        if not last_turn:
+            return await self._llm_service.generate_next_topic(self.interview), False
+
+        try:
+            judgment = await self._llm_service.analyze_last_answer(self.interview)
+            self.interview.set_last_turn_analysis(
+                answer_summary=judgment.extracted_claims,
+                decision=judgment.decision,
+                focus_point=judgment.focus_point,
+            )
+            logger.info(
+                "[답변 판단] decision=%s focus_point=%s summary_count=%d",
+                judgment.decision,
+                judgment.focus_point,
+                len(judgment.extracted_claims),
+            )
+        except Exception as e:
+            logger.warning("답변 요약/판단 실패: %s — NEXT_QUESTION으로 fallback", e)
+            return await self._llm_service.generate_next_topic(self.interview), False
+
+        if judgment.decision == "FOLLOW_UP":
+            result = await self._llm_service.generate_follow_up(
+                self.interview,
+                judgment.focus_point,
+            )
+            return result, True
+
+        return await self._llm_service.generate_next_topic(self.interview), False
+
     async def _handle_next(self, payload: dict) -> None:
         """NEXT 수신: ① STT 버퍼 flush → ② QnA 저장 (fire-and-forget) → ③ 다음 질문 생성·발화 → ④ QUESTION publish.
 
         §5.3 처리 순서:
         1. STT 버퍼에 누적된 텍스트를 직전 턴에 기록
         2. 직전 턴의 Q+A를 Backend로 저장 (fire-and-forget)
-        3. 다음 질문 생성
+        3. 답변 요약/판단 후 꼬리질문 또는 다음 질문 생성
         4. TTS 발화 → 재생 완료 후 QUESTION 메시지 publish
         """
         turn_number = payload.get("turnNumber", 0)
@@ -261,7 +292,7 @@ class InterviewerAgent(Agent):
 
         # ③ 다음 질문 생성·발화
         try:
-            result = await self._llm_service.generate_next_topic(self.interview)
+            result, is_follow_up = await self._choose_next_question()
         except Exception as e:
             logger.exception("다음 질문 생성 실패 (NEXT): %s", e)
             await self._say(
@@ -273,7 +304,7 @@ class InterviewerAgent(Agent):
         await self._say(result["question"])
 
         # ④ QUESTION publish — TTS say()가 재생 완료까지 기다리므로 여기서 publish (§5.4)
-        await self._publish_question(result, is_follow_up=False)
+        await self._publish_question(result, is_follow_up=is_follow_up)
 
     async def _handle_end(self, payload: dict) -> None:
         """END 수신: ① STT 버퍼 flush → ② 마지막 턴 저장 (await) → ③ shutdown.
@@ -335,7 +366,8 @@ class InterviewerAgent(Agent):
             return
 
         try:
-            result = await self._llm_service.generate_next_topic(self.interview, user_answer)
+            self.interview.add_answer(user_answer)
+            result, _ = await self._choose_next_question()
         except Exception as e:
             logger.exception("다음 질문 생성 실패: %s", e)
             yield "죄송합니다, 잠시 문제가 생겼습니다. 다음 질문으로 넘어가겠습니다."
