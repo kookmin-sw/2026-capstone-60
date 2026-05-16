@@ -16,6 +16,9 @@ class ConversationTurn:
     answer: str = ""
     is_follow_up: bool = False
     intent: str = ""
+    answer_summary: list[str] = field(default_factory=list)
+    decision: str = ""
+    focus_point: str = ""
 
 
 @dataclass
@@ -41,6 +44,18 @@ class InterviewSession:
         """마지막 질문에 대한 답변을 기록한다."""
         if self.history:
             self.history[-1].answer = answer
+
+    def set_last_turn_analysis(
+        self,
+        answer_summary: list[str],
+        decision: str,
+        focus_point: str,
+    ) -> None:
+        """마지막 턴의 요약/판단 결과를 기록한다."""
+        if self.history:
+            self.history[-1].answer_summary = answer_summary
+            self.history[-1].decision = decision
+            self.history[-1].focus_point = focus_point
 
     def append_to_buffer(self, text: str) -> None:
         """STT 확정 텍스트를 답변 버퍼에 누적한다."""
