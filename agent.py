@@ -113,6 +113,7 @@ class InterviewerAgent(Agent):
     ):
         super().__init__(instructions="")  # LiveKit 기본 LLM 미사용
         self._llm_service = llm_service
+        self._speaking = False
         self.interview = InterviewSession(
             session_id=session_id,
             job_role=job_role,
@@ -121,6 +122,31 @@ class InterviewerAgent(Agent):
             system_prompt=llm_service.build_system_prompt(job_role, resume_text),
         )
 
+    async def _say(self, text: str) -> None:
+        self._speaking = True
+        try:
+            try:
+                await self.session.say(text, allow_interruptions=False)
+                return
+            except TypeError:
+                pass
+
+            try:
+                await self.session.say(text, allow_barge_in=False)
+                return
+            except TypeError:
+                pass
+
+            try:
+                await self.session.say(text, interruptible=False)
+                return
+            except TypeError:
+                pass
+
+            await self.session.say(text)
+        finally:
+            self._speaking = False
+
     async def on_enter(self) -> None:
         """Room 입장 직후: STT 버퍼링 등록 → Data Message 핸들러 등록 → 첫 질문 발화."""
 
@@ -128,6 +154,8 @@ class InterviewerAgent(Agent):
         # VAD 기반 자동 턴 종료를 끈 상태이므로 STT 결과를 Agent가 직접 모아둔다.
         @self.session.on("user_input_transcribed")
         def _on_user_transcribed(ev):
+            if self._speaking:
+                return
             transcript = getattr(ev, "transcript", "")
             if getattr(ev, "is_final", True) and transcript:
                 self.interview.append_to_buffer(transcript)
@@ -142,8 +170,10 @@ class InterviewerAgent(Agent):
         def _on_data_received(packet, *args, **kwargs):
             """Backend → Agent: NEXT / END 메시지 처리."""
             try:
-                data = packet.data if hasattr(packet, 'data') else packet
-                msg = json.loads(data.decode("utf-8") if isinstance(data, bytes) else str(data))
+                data = packet.data if hasattr(packet, "data") else packet
+                msg = json.loads(
+                    data.decode("utf-8") if isinstance(data, bytes) else str(data)
+                )
             except (json.JSONDecodeError, UnicodeDecodeError) as e:
                 logger.warning("Data Message 파싱 실패: %s", e)
                 return
@@ -152,10 +182,8 @@ class InterviewerAgent(Agent):
             payload = msg.get("payload", {})
 
             if msg_type == "NEXT":
-                import asyncio
                 asyncio.ensure_future(self._handle_next(payload))
             elif msg_type == "END":
-                import asyncio
                 asyncio.ensure_future(self._handle_end(payload))
             else:
                 logger.debug("알 수 없는 Data Message type: %s", msg_type)
@@ -165,13 +193,13 @@ class InterviewerAgent(Agent):
             result = await self._llm_service.generate_first_question(self.interview)
         except Exception as e:
             logger.exception("첫 질문 생성 실패: %s", e)
-            await self.session.say(
+            await self._say(
                 "죄송합니다, 면접 준비에 문제가 있습니다. 잠시 후 다시 시도해 주세요."
             )
             return
 
         logger.info("[첫 질문] %s", result["question"])
-        await self.session.say(result["question"])
+        await self._say(result["question"])
 
         # 첫 질문도 QUESTION publish (§5.4: TTS 재생 완료 후)
         await self._publish_question(result, is_follow_up=False)
@@ -236,13 +264,13 @@ class InterviewerAgent(Agent):
             result = await self._llm_service.generate_next_topic(self.interview)
         except Exception as e:
             logger.exception("다음 질문 생성 실패 (NEXT): %s", e)
-            await self.session.say(
+            await self._say(
                 "죄송합니다, 잠시 문제가 생겼습니다. 다음 질문으로 넘어가겠습니다."
             )
             return
 
         logger.info("[다음 질문] turn=%d question=%s", turn_number, result["question"])
-        await self.session.say(result["question"])
+        await self._say(result["question"])
 
         # ④ QUESTION publish — TTS say()가 재생 완료까지 기다리므로 여기서 publish (§5.4)
         await self._publish_question(result, is_follow_up=False)
@@ -327,6 +355,17 @@ def _extract_last_user_text(chat_ctx: llm_types.ChatContext) -> str:
 
 from livekit.agents import WorkerOptions
 
+def _create_turn_handling_options() -> TurnHandlingOptions:
+    base = {"endpointing": {"min_delay": 3600.0, "max_delay": 3600.0}}
+    for key in ("allow_interruptions", "allow_barge_in", "barge_in", "interruptible"):
+        candidate = dict(base)
+        candidate[key] = False
+        try:
+            return TurnHandlingOptions(**candidate)
+        except TypeError:
+            pass
+    return TurnHandlingOptions(**base)
+
 # ─────────────────────────────────────────────────────────
 # Worker 정의
 # ─────────────────────────────────────────────────────────
@@ -378,9 +417,7 @@ async def entrypoint(ctx: JobContext) -> None:
         # 종료가 오히려 방해된다. 턴 전환은 프론트 버튼 또는 1분30초 타이머 같은
         # 외부 트리거로만 수행한다.
         # STT 자체는 계속 돌아가므로 사용자 발화는 실시간으로 수집된다.
-        turn_handling=TurnHandlingOptions(
-            endpointing={"min_delay": 3600.0, "max_delay": 3600.0},
-        ),
+        turn_handling=_create_turn_handling_options(),
     )
 
     agent = InterviewerAgent(
