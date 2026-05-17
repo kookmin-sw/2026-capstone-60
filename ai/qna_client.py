@@ -14,6 +14,7 @@ INTEGRATION_CONTRACT.md §5.5 참조.
 import asyncio
 import logging
 import os
+from typing import Optional
 
 import aiohttp
 
@@ -39,6 +40,9 @@ async def save_qna(
     intent: str,
     is_follow_up: bool,
     answer: str,
+    answer_summary: Optional[list[str]] = None,
+    follow_up_decision: Optional[str] = None,
+    focus_point: Optional[str] = None,
 ) -> bool:
     """
     단건 QnA를 Backend에 저장한다.
@@ -56,6 +60,9 @@ async def save_qna(
         "intent": intent,
         "isFollowUp": is_follow_up,
         "answer": answer,
+        "answerSummary": answer_summary,
+        "followUpDecision": follow_up_decision,
+        "focusPoint": focus_point,
     }
     headers = {"Content-Type": "application/json"}
     if SERVICE_TOKEN:
