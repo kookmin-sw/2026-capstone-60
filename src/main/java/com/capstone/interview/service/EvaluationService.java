@@ -87,7 +87,7 @@ public class EvaluationService {
             sb.append("[질문 %d] %s\n".formatted(qna.getSequenceNumber(), qna.getQuestionContent()));
             sb.append("[답변 %d] %s\n\n".formatted(
                     qna.getSequenceNumber(),
-                    qna.getAnswerContent() != null ? qna.getAnswerContent() : "답변 없음"
+                    parseAnswerSummary(qna)
             ));
         }
 
@@ -157,6 +157,31 @@ public class EvaluationService {
                     (llmResponse != null && llmResponse.length() > 200) ? llmResponse.substring(0, 200) : llmResponse, e);
             interview.fail();
             interviewRepository.save(interview);
+        }
+    }
+
+    /**
+     * answerSummary(JSON 배열)를 파싱해 줄바꿈으로 이어붙인 문자열을 반환한다.
+     * answerSummary가 없으면 answerContent(STT 원문)로 폴백한다.
+     */
+    private String parseAnswerSummary(InterviewQna qna) {
+        String summary = qna.getAnswerSummary();
+        if (summary == null || summary.isBlank()) {
+            return qna.getAnswerContent() != null ? qna.getAnswerContent() : "답변 없음";
+        }
+        try {
+            JsonNode node = objectMapper.readTree(summary);
+            if (node.isArray()) {
+                StringBuilder sb = new StringBuilder();
+                for (JsonNode item : node) {
+                    if (sb.length() > 0) sb.append("\n");
+                    sb.append(item.asText());
+                }
+                return sb.isEmpty() ? (qna.getAnswerContent() != null ? qna.getAnswerContent() : "답변 없음") : sb.toString();
+            }
+            return summary;
+        } catch (Exception e) {
+            return qna.getAnswerContent() != null ? qna.getAnswerContent() : "답변 없음";
         }
     }
 
