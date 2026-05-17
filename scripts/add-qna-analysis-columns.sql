@@ -1,0 +1,4 @@
+ALTER TABLE interview_qnas
+  ADD COLUMN IF NOT EXISTS answer_summary TEXT NULL,
+  ADD COLUMN IF NOT EXISTS follow_up_decision VARCHAR(32) NULL,
+  ADD COLUMN IF NOT EXISTS focus_point TEXT NULL;

@@ -1,5 +1,7 @@
 package com.capstone.interview.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.capstone.interview.dto.InternalQnaRequest;
 import com.capstone.interview.entity.Interview;
 import com.capstone.interview.entity.InterviewQna;
@@ -18,6 +20,7 @@ public class InternalQnaService {
 
     private final InterviewRepository interviewRepository;
     private final InterviewQnaRepository interviewQnaRepository;
+    private final ObjectMapper objectMapper;
 
     /**
      * Agent 가 매 턴 전송하는 Q+A 를 upsert 한다.
@@ -45,6 +48,19 @@ public class InternalQnaService {
             if (request.answer() != null) {
                 existing.updateAnswer(request.answer());
             }
+            if (hasAnswerAnalysis(request)) {
+                existing.updateAnswerAnalysis(
+                        request.answerSummary() != null
+                                ? toJson(request.answerSummary())
+                                : existing.getAnswerSummary(),
+                        request.followUpDecision() != null
+                                ? request.followUpDecision()
+                                : existing.getFollowUpDecision(),
+                        request.focusPoint() != null
+                                ? request.focusPoint()
+                                : existing.getFocusPoint()
+                );
+            }
             log.info("[QnA upsert] 기존 턴 업데이트. sessionId={}, turn={}", sessionId, request.turnNumber());
         } else {
             // insert: 새 레코드 생성
@@ -55,9 +71,29 @@ public class InternalQnaService {
                     .answerContent(request.answer() != null ? request.answer() : "")
                     .isFollowUp(request.isFollowUp() != null && request.isFollowUp())
                     .intent(request.intent())
+                    .answerSummary(toJson(request.answerSummary()))
+                    .followUpDecision(request.followUpDecision())
+                    .focusPoint(request.focusPoint())
                     .build();
             interviewQnaRepository.save(newQna);
             log.info("[QnA insert] 새 턴 저장. sessionId={}, turn={}", sessionId, request.turnNumber());
+        }
+    }
+
+    private boolean hasAnswerAnalysis(InternalQnaRequest request) {
+        return request.answerSummary() != null
+                || request.followUpDecision() != null
+                || request.focusPoint() != null;
+    }
+
+    private String toJson(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("answerSummary JSON serialization failed", e);
         }
     }
 }
