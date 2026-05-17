@@ -32,8 +32,9 @@ public class PdfParserService {
             PDFTextStripper stripper = new PDFTextStripper();
             String text = stripper.getText(document);
 
-            log.info("[PDF 파싱] 완료: {}페이지, {}글자", document.getNumberOfPages(), text.length());
-            return text.trim();
+            String cleanedText = text.replace("\u0000", "");
+            log.info("[PDF 파싱] 완료: {}페이지, {}글자", document.getNumberOfPages(), cleanedText.length());
+            return cleanedText.trim();
         }
     }
 }
