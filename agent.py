@@ -234,21 +234,8 @@ class InterviewerAgent(Agent):
         if not last_turn:
             return await self._llm_service.generate_next_topic(self.interview), False
 
-        try:
-            judgment = await self._llm_service.analyze_last_answer(self.interview)
-            self.interview.set_last_turn_analysis(
-                answer_summary=judgment.extracted_claims,
-                decision=judgment.decision,
-                focus_point=judgment.focus_point,
-            )
-            logger.info(
-                "[답변 판단] decision=%s focus_point=%s summary_count=%d",
-                judgment.decision,
-                judgment.focus_point,
-                len(judgment.extracted_claims),
-            )
-        except Exception as e:
-            logger.warning("답변 요약/판단 실패: %s — NEXT_QUESTION으로 fallback", e)
+        judgment = await self._analyze_last_turn()
+        if judgment is None:
             return await self._llm_service.generate_next_topic(self.interview), False
 
         if judgment.decision == "FOLLOW_UP":
@@ -259,6 +246,27 @@ class InterviewerAgent(Agent):
             return result, True
 
         return await self._llm_service.generate_next_topic(self.interview), False
+
+
+    async def _analyze_last_turn(self):
+        """Analyze and cache the latest answer. Returns None if analysis fails."""
+        try:
+            judgment = await self._llm_service.analyze_last_answer(self.interview)
+            self.interview.set_last_turn_analysis(
+                answer_summary=judgment.extracted_claims,
+                decision=judgment.decision,
+                focus_point=judgment.focus_point,
+            )
+            logger.info(
+                "[answer analysis] decision=%s focus_point=%s summary_count=%d",
+                judgment.decision,
+                judgment.focus_point,
+                len(judgment.extracted_claims),
+            )
+            return judgment
+        except Exception as e:
+            logger.warning("answer analysis failed: %s; falling back to NEXT_QUESTION", e)
+            return None
 
     async def _handle_next(self, payload: dict) -> None:
         """NEXT 수신: ① STT 버퍼 flush → ② QnA 저장 (fire-and-forget) → ③ 다음 질문 생성·발화 → ④ QUESTION publish.
@@ -279,16 +287,7 @@ class InterviewerAgent(Agent):
 
         # ② QnA 저장 — fire-and-forget (§5.5)
         prev_turn = self.interview.history[-1] if self.interview.history else None
-        if prev_turn:
-            prev_turn_number = len(self.interview.history)
-            asyncio.create_task(save_qna(
-                session_id=self.interview.session_id,
-                turn_number=prev_turn_number,
-                question=prev_turn.question,
-                intent=prev_turn.intent,
-                is_follow_up=prev_turn.is_follow_up,
-                answer=prev_turn.answer,
-            ))
+        prev_turn_number = len(self.interview.history)
 
         # ③ 다음 질문 생성·발화
         try:
@@ -299,6 +298,20 @@ class InterviewerAgent(Agent):
                 "죄송합니다, 잠시 문제가 생겼습니다. 다음 질문으로 넘어가겠습니다."
             )
             return
+
+        # Store after analysis so answer_summary/decision/focus_point are included.
+        if prev_turn:
+            asyncio.create_task(save_qna(
+                session_id=self.interview.session_id,
+                turn_number=prev_turn_number,
+                question=prev_turn.question,
+                intent=prev_turn.intent,
+                is_follow_up=prev_turn.is_follow_up,
+                answer=prev_turn.answer,
+                answer_summary=prev_turn.answer_summary,
+                follow_up_decision=prev_turn.decision,
+                focus_point=prev_turn.focus_point,
+            ))
 
         logger.info("[다음 질문] turn=%d question=%s", turn_number, result["question"])
         await self._say(result["question"])
@@ -326,6 +339,7 @@ class InterviewerAgent(Agent):
         last_turn = self.interview.history[-1] if self.interview.history else None
         if last_turn:
             last_turn_number = len(self.interview.history)
+            await self._analyze_last_turn()
             await save_qna(
                 session_id=self.interview.session_id,
                 turn_number=last_turn_number,
@@ -333,6 +347,9 @@ class InterviewerAgent(Agent):
                 intent=last_turn.intent,
                 is_follow_up=last_turn.is_follow_up,
                 answer=last_turn.answer,
+                answer_summary=last_turn.answer_summary,
+                follow_up_decision=last_turn.decision,
+                focus_point=last_turn.focus_point,
             )
 
         # ③ shutdown
