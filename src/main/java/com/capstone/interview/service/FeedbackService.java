@@ -7,6 +7,8 @@ import com.capstone.interview.entity.InterviewQna;
 import com.capstone.interview.entity.InterviewStatus;
 import com.capstone.interview.repository.InterviewQnaRepository;
 import com.capstone.interview.repository.InterviewRepository;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,6 +26,7 @@ public class FeedbackService {
     private final InterviewRepository interviewRepository;
     private final InterviewQnaRepository interviewQnaRepository;
     private final MemberRepository memberRepository;
+    private final ObjectMapper objectMapper;
 
 
     /**
@@ -53,7 +56,7 @@ public class FeedbackService {
                 .map(qna -> QAPair.builder()
                         .sequenceNumber(qna.getSequenceNumber())
                         .questionContent(qna.getQuestionContent())
-                        .answerContent(qna.getAnswerContent())
+                        .answerContent(parseAnswerSummary(qna))
                         .modelAnswer(qna.getModelAnswer())
                         .individualFeedback(qna.getIndividualFeedback())
                         .isFollowUp(qna.isFollowUp()) // 엔티티의 메서드 사용
@@ -109,6 +112,31 @@ public class FeedbackService {
             return rawData.substring(rawData.indexOf("[CHART]") + "[CHART]".length()).trim();
         }
         return "{}";
+    }
+
+    /**
+     * answerSummary(JSON 배열)를 파싱해 줄바꿈으로 이어붙인 문자열을 반환한다.
+     * answerSummary가 없으면 answerContent(STT 원문)로 폴백한다.
+     */
+    private String parseAnswerSummary(InterviewQna qna) {
+        String summary = qna.getAnswerSummary();
+        if (summary == null || summary.isBlank()) {
+            return qna.getAnswerContent();
+        }
+        try {
+            JsonNode node = objectMapper.readTree(summary);
+            if (node.isArray()) {
+                StringBuilder sb = new StringBuilder();
+                for (JsonNode item : node) {
+                    if (sb.length() > 0) sb.append("\n");
+                    sb.append(item.asText());
+                }
+                return sb.toString();
+            }
+            return summary;
+        } catch (Exception e) {
+            return summary;
+        }
     }
 
     /*
