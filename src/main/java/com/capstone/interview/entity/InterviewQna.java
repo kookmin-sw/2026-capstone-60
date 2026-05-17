@@ -47,6 +47,15 @@ public class InterviewQna {
     @Column(name = "individual_feedback", columnDefinition = "TEXT")
     private String individualFeedback;
 
+    @Column(name = "answer_summary", columnDefinition = "TEXT")
+    private String answerSummary;
+
+    @Column(name = "follow_up_decision", length = 32)
+    private String followUpDecision;
+
+    @Column(name = "focus_point", columnDefinition = "TEXT")
+    private String focusPoint;
+
     @Column(name = "audio_url", length = 1024)
     private String audioUrl;
 
@@ -70,7 +79,8 @@ public class InterviewQna {
     @Builder
     public InterviewQna(Interview interview, Integer sequenceNumber, String questionContent,
                         String answerContent, boolean isFollowUp, InterviewQna parent,
-                        String intent, LocalDateTime startedAt, LocalDateTime expiresAt) {
+                        String intent, String answerSummary, String followUpDecision,
+                        String focusPoint, LocalDateTime startedAt, LocalDateTime expiresAt) {
         this.interview = interview;
         this.sequenceNumber = sequenceNumber;
         this.questionContent = questionContent;
@@ -78,6 +88,9 @@ public class InterviewQna {
         this.isFollowUp = isFollowUp;
         this.parent = parent;
         this.intent = intent;
+        this.answerSummary = answerSummary;
+        this.followUpDecision = followUpDecision;
+        this.focusPoint = focusPoint;
         this.startedAt = startedAt;
         this.expiresAt = expiresAt;
     }
@@ -90,6 +103,12 @@ public class InterviewQna {
         this.questionContent = questionContent;
         this.intent = intent;
         this.isFollowUp = isFollowUp;
+    }
+
+    public void updateAnswerAnalysis(String answerSummary, String followUpDecision, String focusPoint) {
+        this.answerSummary = answerSummary;
+        this.followUpDecision = followUpDecision;
+        this.focusPoint = focusPoint;
     }
 
     public void updateTimer(LocalDateTime startedAt, LocalDateTime expiresAt) {
