@@ -1,45 +1,126 @@
 [![Review Assignment Due Date](https://classroom.github.com/assets/deadline-readme-button-22041afd0340ce965d47ae6ef1cefeee28c7c493a6346c4f15d667ab976d596c.svg)](https://classroom.github.com/a/Lvs6kcL8)
 
-## 팀소개 및 페이지를 꾸며주세요.
+# 인터톡(Intertalk) - 실제 후기 기반 개발자 AI 모의 면접 시스템
 
-- 프로젝트 소개
-  - 프로젝트 설치방법 및 데모, 사용방법, 프리뷰등을 readme.md에 작성.
-  - Api나 사용방법등 내용이 많을경우 wiki에 꾸미고 링크 추가.
+## 1. 프로젝트 소개
 
-- 팀페이지 꾸미기
-  - 프로젝트 소개 및 팀원 소개
-  - index.md 예시보고 수정.
+지원자의 이력서와 자기소개서를 기반으로 맞춤형 기술 면접을 진행하는 AI 모의 면접 시스템입니다.
 
-- GitHub Pages 리파지토리 Settings > Options > GitHub Pages 
-  - Source를 marster branch
-  - Theme Chooser에서 태마선택
-  - 수정후 팀페이지 확인하여 점검.
+- RAG(검색 증강 생성) 기술을 활용하여 최신 면접 후기 데이터를 반영한 동적 질문 생성
+- 사용자의 음성 답변을 실시간으로 분석하여 꼬리 질문 제공
+- LLM 기반의 세부 카테고리별(정확성, 논리성, 깊이, 전달력) 피드백 제공
+- LiveKit 기반 실시간 음성 면접 환경 (질문당 1분 30초, 총 15분 제한)
 
-**팀페이지 주소** -> https://kookmin-sw.github.io/ '{{자신의 리파지토리 아이디}}'
+### 주요 기능
 
-**예시)** 2023년 0조  https://kookmin-sw.github.io/capstone-2023-00/
+| 기능 | 설명 |
+|------|------|
+| 이력서 PDF 파싱 | Apache PDFBox로 PDF → 텍스트 자동 추출 후 DB 저장 |
+| RAG 기반 질문 생성 | Velog 크롤링 → S3 → Knowledge Base 인덱싱 → 질문 생성 시 참고 |
+| 실시간 음성 면접 | LiveKit STT/TTS로 음성 질문-답변 교환 |
+| AI 꼬리질문 | 답변 분석 후 부족한 점(focus_point) 기반 심화 질문 생성 |
+| AI 피드백 리포트 | 면접 종료 후 질문별 상세 평가 및 모범 답안 제공 |
 
+### 기술 스택
 
-## 내용에 아래와 같은 내용들을 추가하세요.
+- **Backend**: Java 17, Spring Boot 4.x, Spring Security, Spring Data JPA
+- **AI Agent**: Python, LiveKit Agent, AWS Bedrock (Claude 3.5 Sonnet)
+- **Frontend**: React, JavaScript, Vite
+- **Database**: PostgreSQL + pgvector
+- **Infra**: AWS EC2, S3, Bedrock Knowledge Base, GitHub Actions, Vercel
+- **음성**: LiveKit Cloud (WebRTC, STT/TTS)
 
-### 1. 프로잭트 소개
+## 2. 소개 영상
 
-프로젝트
+(추후 추가 예정)
 
-### 2. 소개 영상
+## 3. 팀 소개
 
-프로젝트 소개하는 영상을 추가하세요
+**AWS 캡스톤디자인 60팀**
 
-### 3. 팀 소개
+| 이름 | 학번 | 담당 |
+|------|------|------|
+| 김준범 | 20203048 | 프론트엔드, 인프라/배포 |
+| 정은미 | 20220792 | 면접 시작~종료 흐름, DB 설계 |
+| 최현택 | 20203154 | LLM 평가 + 피드백, 마이페이지, CI/CD |
+| 함태원 | 20213095 | AI 질문 생성, RAG 파이프라인, 크롤링 |
 
-팀을 소개하세요.
+## 4. 사용법
 
-팀원정보 및 담당이나 사진 및 SNS를 이용하여 소개하세요.
+### 사전 준비
+- JDK 17
+- Docker Desktop (PostgreSQL용)
+- Node.js 18+ (프론트엔드)
 
-### 4. 사용법
+### Backend 실행
+```bash
+cd backend
+cp .env.example .env
+# .env에 JWT_SECRET, LIVEKIT_*, DB_* 설정
 
-소스코드제출시 설치법이나 사용법을 작성하세요.
+docker compose up -d    # PostgreSQL 실행
+./gradlew bootRun       # Spring Boot 서버 실행 (localhost:8080)
+```
 
-### 5. 기타
+### Frontend 실행
+```bash
+cd frontend
+npm install
+npm run dev             # 개발 서버 실행 (localhost:5173)
+```
 
-추가적인 내용은 자유롭게 작성하세요.
+### RAG 크롤링 파이프라인 (선택)
+```bash
+cd interview-agent
+pip install -r requirements.txt
+python -m pipeline.run_crawl --sync --kb-id MVJMHC0YM2 --data-source-id RDWXCFKHMW
+```
+
+### 배포 환경
+- **Backend**: AWS EC2 + GitHub Actions 자동 배포
+- **Frontend**: Vercel 자동 배포
+- **AI Agent**: LiveKit Cloud에서 자동 실행
+
+## 5. 시스템 아키텍처
+
+```
+[Frontend (React/Vercel)]
+   │  REST API (JWT 인증)
+   ▼
+[Backend (Spring Boot / EC2)]
+   ├── 회원 인증, 이력서 파싱, 세션 관리
+   ├── Agent Dispatch (metadata에 이력서 텍스트 포함)
+   └── AI 평가/피드백 생성 (Bedrock 호출)
+         │
+         ▼
+[LiveKit Cloud] ◀──WebRTC──▶ [Frontend]
+         │
+         ▼
+[LiveKit Agent (Python)]
+   ├── STT (음성 → 텍스트)
+   ├── 답변 판단 (충족/미충족)
+   ├── KB 검색 (Bedrock Knowledge Base)
+   ├── 질문 생성 (Bedrock Claude)
+   └── TTS (텍스트 → 음성)
+
+[크롤링 파이프라인]
+   Velog 크롤링 → S3 업로드 → Knowledge Base 자동 인덱싱
+```
+
+## 6. 프로젝트 구조
+
+```
+├── backend/              # Spring Boot 메인 서버
+├── frontend/             # React 프론트엔드
+├── interview-agent/      # LiveKit Agent + RAG 파이프라인
+│   ├── agent.py          # LiveKit Agent 메인
+│   ├── ai/              # LLM 서비스, 프롬프트, 세션 관리
+│   └── pipeline/        # 크롤링 + S3 업로드
+└── README.md
+```
+
+## 7. 관련 링크
+
+- [Backend Repository](https://github.com/capstone-ai-mock-interview/backend)
+- [Frontend Repository](https://github.com/capstone-ai-mock-interview/frontend)
+- [RAG/Agent Repository](https://github.com/capstone-ai-mock-interview/RAG)
