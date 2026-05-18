@@ -4,6 +4,7 @@ import com.capstone.interview.dto.ResumeResponse;
 import com.capstone.interview.dto.ResumeUploadRequest;
 import com.capstone.interview.entity.Member;
 import com.capstone.interview.entity.Resume;
+import com.capstone.interview.repository.InterviewRepository;
 import com.capstone.interview.repository.MemberRepository;
 import com.capstone.interview.repository.ResumeRepository;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +28,7 @@ public class ResumeService {
     private final PdfParserService pdfParserService;
     private final ResumeRepository resumeRepository;
     private final MemberRepository memberRepository;
+    private final InterviewRepository interviewRepository;
 
     /**
      * PDF 이력서를 업로드하고 파싱하여 DB에 저장한다.
@@ -104,6 +106,30 @@ public class ResumeService {
         Resume resume = resumeRepository.findById(resumeId)
                 .orElseThrow(() -> new IllegalArgumentException("이력서를 찾을 수 없습니다: " + resumeId));
         return toResponse(resume);
+    }
+
+    /**
+     * 이력서를 삭제한다. 본인의 이력서만 삭제 가능.
+     * 면접 기록에서 참조 중인 이력서는 삭제할 수 없다.
+     */
+    @Transactional
+    public void deleteResume(String loginId, Long resumeId) {
+        Member member = memberRepository.findByLoginId(loginId)
+                .orElseThrow(() -> new IllegalArgumentException("회원을 찾을 수 없습니다."));
+
+        Resume resume = resumeRepository.findById(resumeId)
+                .orElseThrow(() -> new IllegalArgumentException("이력서를 찾을 수 없습니다: " + resumeId));
+
+        if (!resume.getMember().getId().equals(member.getId())) {
+            throw new IllegalArgumentException("본인의 이력서만 삭제할 수 있습니다.");
+        }
+
+        if (interviewRepository.existsByResumeId(resumeId)) {
+            throw new IllegalArgumentException("면접 기록에서 사용 중인 이력서는 삭제할 수 없습니다.");
+        }
+
+        resumeRepository.delete(resume);
+        log.info("[이력서 삭제] id={}, memberId={}", resumeId, member.getId());
     }
 
     private ResumeResponse toResponse(Resume resume) {
