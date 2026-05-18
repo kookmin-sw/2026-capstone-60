@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "re
 import { deleteMe, fetchMe, login, logout, signup, updateMe } from "./api/authApi";
 import ApiTestPage from "./components/ApiTestPage";
 import {
+  deleteInterviewRecord,
   fetchInterviewRecordDetail,
   fetchInterviewRecords,
   saveInterviewRecord,
@@ -298,6 +299,15 @@ export default function App() {
     }
   };
 
+  const handleDeleteRecord = async (sessionId) => {
+    try {
+      await deleteInterviewRecord(sessionId);
+      setHistoryRecords((prev) => prev.filter((r) => r.sessionId !== sessionId));
+    } catch (deleteError) {
+      setError(deleteError.message || "면접 기록 삭제에 실패했습니다.");
+    }
+  };
+
   const reset = () => {
     setSession(null);
     setResult(null);
@@ -426,6 +436,7 @@ export default function App() {
                 loading={historyLoading}
                 records={historyRecords}
                 onSelectRecord={openHistoryDetail}
+                onDeleteRecord={handleDeleteRecord}
               />
             ) : (
               <Navigate to={ROUTE.LOGIN} replace />
