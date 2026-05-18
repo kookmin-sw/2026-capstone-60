@@ -61,9 +61,14 @@ export default function LobbyView({ session, onEnterRoom, onError }) {
     }
   };
 
-  const copySessionId = async () => {
+  const inviteUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/interview/join/${session.sessionId}`
+      : `/interview/join/${session.sessionId}`;
+
+  const copyInviteLink = async () => {
     try {
-      await navigator.clipboard.writeText(session.sessionId);
+      await navigator.clipboard.writeText(inviteUrl);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -92,18 +97,18 @@ export default function LobbyView({ session, onEnterRoom, onError }) {
 
       <div className="panel" style={{ marginBottom: "1rem" }}>
         <label className="field">
-          <span>세션 ID (공유용)</span>
+          <span>초대 링크 (공유용)</span>
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
             <code style={{ flex: 1, wordBreak: "break-all", fontSize: "0.85rem" }}>
-              {session.sessionId}
+              {inviteUrl}
             </code>
-            <Button type="button" variant="secondary" size="sm" onClick={copySessionId}>
-              {copied ? "복사됨" : "복사"}
+            <Button type="button" variant="secondary" size="sm" onClick={copyInviteLink}>
+              {copied ? "복사됨" : "링크 복사"}
             </Button>
           </div>
         </label>
         <p className="subtext compact">
-          입장 경로: 로그인 후 <strong>/interview/join/{session.sessionId}</strong>
+          게스트는 링크 접속 → 로그인 → join API 호출 후 이 대기실로 이동합니다.
         </p>
       </div>
 

@@ -44,6 +44,22 @@ const ROUTE = {
   HISTORY: "/history",
 };
 
+function loginUrlWithRedirect(pathname) {
+  const safePath =
+    pathname && pathname.startsWith("/") && !pathname.startsWith("//")
+      ? pathname
+      : ROUTE.HOME;
+  return `${ROUTE.LOGIN}?redirect=${encodeURIComponent(safePath)}`;
+}
+
+function resolveRedirectTarget(search) {
+  const redirect = new URLSearchParams(search).get("redirect");
+  if (redirect && redirect.startsWith("/") && !redirect.startsWith("//")) {
+    return redirect;
+  }
+  return ROUTE.HOME;
+}
+
 export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -72,18 +88,23 @@ export default function App() {
       setResult(null);
       setHistoryRecords([]);
       setHistoryDetail(null);
-      navigate(ROUTE.LOGIN, { replace: true });
+      navigate(loginUrlWithRedirect(location.pathname), { replace: true });
     };
     window.addEventListener("auth:unauthorized", handleUnauthorized);
     return () => window.removeEventListener("auth:unauthorized", handleUnauthorized);
-  }, [navigate]);
+  }, [navigate, location.pathname]);
 
   useEffect(() => {
     async function bootstrapAuth() {
       try {
         const profile = await fetchMe();
         setUser(profile);
-        if (location.pathname === ROUTE.LOGIN || location.pathname === ROUTE.SIGNUP) {
+        if (
+          location.pathname === ROUTE.LOGIN &&
+          new URLSearchParams(location.search).has("redirect")
+        ) {
+          navigate(resolveRedirectTarget(location.search), { replace: true });
+        } else if (location.pathname === ROUTE.LOGIN || location.pathname === ROUTE.SIGNUP) {
           navigate(ROUTE.HOME, { replace: true });
         }
       } catch {
@@ -98,7 +119,7 @@ export default function App() {
           ROUTE.MYPAGE,
         ];
         if (protectedPaths.some((p) => location.pathname.startsWith(p))) {
-          navigate(ROUTE.LOGIN, { replace: true });
+          navigate(loginUrlWithRedirect(location.pathname), { replace: true });
         }
       } finally {
         setBootstrapping(false);
@@ -113,7 +134,12 @@ export default function App() {
       setAuthLoading(true);
       setError("");
       await signup(loginId, password, name);
-      navigate(ROUTE.LOGIN);
+      const redirect = new URLSearchParams(location.search).get("redirect");
+      navigate(
+        redirect
+          ? `${ROUTE.LOGIN}?redirect=${encodeURIComponent(redirect)}`
+          : ROUTE.LOGIN
+      );
     } catch (signupError) {
       setError(signupError.message);
     } finally {
@@ -179,7 +205,7 @@ export default function App() {
       setError("");
       const authUser = await login(loginId, password);
       setUser(authUser);
-      navigate(ROUTE.HOME);
+      navigate(resolveRedirectTarget(location.search));
     } catch (loginError) {
       setError(loginError.message);
     } finally {
@@ -458,7 +484,7 @@ export default function App() {
                 onError={setError}
               />
             ) : (
-              <Navigate to={ROUTE.LOGIN} replace />
+              <Navigate to={loginUrlWithRedirect(location.pathname)} replace />
             )
           }
         />
