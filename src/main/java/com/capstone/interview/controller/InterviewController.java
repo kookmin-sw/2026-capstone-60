@@ -51,4 +51,13 @@ public class InterviewController {
         log.info("[세션 종료 성공] sessionId={}, status={}", sessionId, response.data().status());
         return ResponseEntity.ok(response);
     }
+
+    @DeleteMapping("/{sessionId}")
+    public ResponseEntity<Void> deleteSession(@PathVariable String sessionId) {
+        log.info("[면접 기록 삭제 요청] sessionId={}", sessionId);
+
+        interviewService.deleteSession(sessionId);
+        log.info("[면접 기록 삭제 성공] sessionId={}", sessionId);
+        return ResponseEntity.noContent().build();
+    }
 }
