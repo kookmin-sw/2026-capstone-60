@@ -13,6 +13,8 @@ import HomeView from "./components/HomeView";
 import HistoryDetailView from "./components/HistoryDetailView";
 import HistoryListView from "./components/HistoryListView";
 import InterviewRoom from "./components/InterviewRoom";
+import JoinInterviewView from "./components/JoinInterviewView";
+import LobbyView from "./components/LobbyView";
 import LoginForm from "./components/LoginForm";
 import MyPage from "./components/MyPage";
 import ResultView from "./components/ResultView";
@@ -34,6 +36,8 @@ const ROUTE = {
   MYPAGE: "/mypage",
   API_TEST: "/api-test",
   SETUP: "/interview/setup",
+  LOBBY: "/interview/lobby",
+  JOIN: "/interview/join",
   ROOM: "/interview/room",
   EVALUATING: "/interview/evaluating",
   RESULT: "/interview/result",
@@ -85,6 +89,8 @@ export default function App() {
       } catch {
         const protectedPaths = [
           ROUTE.SETUP,
+          ROUTE.LOBBY,
+          ROUTE.JOIN,
           ROUTE.ROOM,
           ROUTE.EVALUATING,
           ROUTE.RESULT,
@@ -115,26 +121,56 @@ export default function App() {
     }
   };
 
+  const buildSessionState = (data, payload, extras = {}) => ({
+    sessionId: data.sessionId,
+    jobField: payload?.jobField ?? extras.jobField,
+    durationMinutes: payload?.durationMinutes ?? extras.durationMinutes,
+    livekit: data.livekit,
+    answerTimeLimitSeconds: data.answerTimeLimitSeconds || 90,
+    totalDurationSeconds: data.totalDurationSeconds || (payload?.durationMinutes ?? 15) * 60,
+    mode: data.mode || (data.maxParticipants > 1 ? "GROUP" : "SOLO"),
+    maxParticipants: data.maxParticipants ?? 1,
+    status: data.status,
+    role: extras.role || "HOST",
+    myIdentity: extras.myIdentity || (user?.id ? `user-${user.id}` : undefined),
+  });
+
   const startSession = async (payload) => {
     try {
       setStartLoading(true);
       setError("");
       const response = await createInterviewSession(payload);
       const data = response.data;
-      setSession({
-        sessionId: data.sessionId,
-        jobField: payload.jobField,
-        durationMinutes: payload.durationMinutes,
-        livekit: data.livekit,
-        answerTimeLimitSeconds: data.answerTimeLimitSeconds || 90,
-        totalDurationSeconds: data.totalDurationSeconds || payload.durationMinutes * 60,
+      const sessionState = buildSessionState(data, payload, {
+        role: "HOST",
+        myIdentity: user?.id ? `user-${user.id}` : undefined,
       });
-      navigate(ROUTE.ROOM);
+      setSession(sessionState);
+      if (sessionState.mode === "GROUP" || sessionState.maxParticipants > 1) {
+        navigate(ROUTE.LOBBY);
+      } else {
+        navigate(ROUTE.ROOM);
+      }
     } catch (sessionError) {
       setError(sessionError.message);
     } finally {
       setStartLoading(false);
     }
+  };
+
+  const handleEnterRoomFromLobby = (updatedSession) => {
+    setSession((prev) => ({ ...prev, ...updatedSession }));
+    navigate(ROUTE.ROOM);
+  };
+
+  const handleJoinedSession = (joinedSession) => {
+    setSession({
+      ...joinedSession,
+      answerTimeLimitSeconds: 90,
+      durationMinutes: joinedSession.durationMinutes ?? 15,
+      totalDurationSeconds: joinedSession.totalDurationSeconds ?? 15 * 60,
+      jobField: joinedSession.jobField ?? "BACKEND",
+    });
   };
 
   const signIn = async (loginId, password) => {
@@ -393,6 +429,34 @@ export default function App() {
           element={
             user ? (
               <SessionSetupForm onSubmit={startSession} isSubmitting={startLoading} />
+            ) : (
+              <Navigate to={ROUTE.LOGIN} replace />
+            )
+          }
+        />
+        <Route
+          path={ROUTE.LOBBY}
+          element={
+            user && session ? (
+              <LobbyView
+                session={session}
+                onEnterRoom={handleEnterRoomFromLobby}
+                onError={setError}
+              />
+            ) : (
+              <Navigate to={ROUTE.SETUP} replace />
+            )
+          }
+        />
+        <Route
+          path={`${ROUTE.JOIN}/:sessionId`}
+          element={
+            user ? (
+              <JoinInterviewView
+                user={user}
+                onJoined={handleJoinedSession}
+                onError={setError}
+              />
             ) : (
               <Navigate to={ROUTE.LOGIN} replace />
             )

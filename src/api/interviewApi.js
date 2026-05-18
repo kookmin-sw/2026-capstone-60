@@ -15,6 +15,7 @@ const USE_MOCK_RESULT =
 const mockStore = {
   sessions: new Map(),
   results: new Map(),
+  lobbies: new Map(),
 };
 
 function request(path, options = {}) {
@@ -28,6 +29,32 @@ export function createInterviewSession(data) {
   return request("/sessions", {
     method: "POST",
     body: JSON.stringify(data),
+  });
+}
+
+export function joinSession(sessionId, body = {}) {
+  if (USE_MOCK_SESSION) {
+    return joinMockSession(sessionId, body);
+  }
+  return request(`/sessions/${sessionId}/join`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function getLobby(sessionId) {
+  if (USE_MOCK_SESSION) {
+    return getMockLobby(sessionId);
+  }
+  return request(`/sessions/${sessionId}/lobby`, { method: "GET" });
+}
+
+export function setReady(sessionId) {
+  if (USE_MOCK_SESSION) {
+    return setMockReady(sessionId);
+  }
+  return request(`/sessions/${sessionId}/participants/me/ready`, {
+    method: "PATCH",
   });
 }
 
@@ -187,6 +214,14 @@ async function createMockSession(data) {
     result,
   });
 
+  const maxParticipants = data.maxParticipants || 1;
+  const isGroup = maxParticipants > 1;
+  mockStore.lobbies.set(sessionId, {
+    maxParticipants,
+    participants: [{ memberId: 1, name: "데모 사용자", loginId: "demo", role: "HOST", ready: false, identity: "user-1" }],
+    status: isGroup ? "WAITING" : "IN_PROGRESS",
+  });
+
   return {
     success: true,
     data: {
@@ -199,8 +234,81 @@ async function createMockSession(data) {
       },
       answerTimeLimitSeconds: 90,
       totalDurationSeconds: (data.durationMinutes || 15) * 60,
+      mode: isGroup ? "GROUP" : "SOLO",
+      maxParticipants,
+      status: isGroup ? "WAITING" : "IN_PROGRESS",
     },
   };
+}
+
+async function joinMockSession(sessionId, body) {
+  await delay(300);
+  const lobby = mockStore.lobbies.get(sessionId);
+  if (!lobby) throw new Error("존재하지 않는 세션입니다.");
+  if (lobby.participants.length >= lobby.maxParticipants) {
+    throw new Error("면접 정원이 가득 찼습니다.");
+  }
+  lobby.participants.push({
+    memberId: 2,
+    name: "게스트",
+    loginId: "guest",
+    role: "GUEST",
+    ready: false,
+    identity: "user-2",
+  });
+  return {
+    success: true,
+    data: {
+      sessionId,
+      livekit: { roomName: "mock-room", url: "wss://mock.livekit.local", accessToken: "mock-guest-token", isMock: true },
+      mode: "GROUP",
+      status: lobby.status,
+      role: "GUEST",
+      myIdentity: "user-2",
+      maxParticipants: lobby.maxParticipants,
+    },
+  };
+}
+
+async function getMockLobby(sessionId) {
+  await delay(200);
+  const lobby = mockStore.lobbies.get(sessionId);
+  if (!lobby) throw new Error("존재하지 않는 세션입니다.");
+  const readyCount = lobby.participants.filter((p) => p.ready).length;
+  return {
+    success: true,
+    data: {
+      sessionId,
+      status: lobby.status,
+      mode: "GROUP",
+      maxParticipants: lobby.maxParticipants,
+      currentParticipants: lobby.participants.length,
+      readyCount,
+      allReady: readyCount === lobby.maxParticipants && lobby.participants.length === lobby.maxParticipants,
+      myRole: "HOST",
+      myIdentity: "user-1",
+      myReady: lobby.participants[0]?.ready ?? false,
+      participants: lobby.participants,
+      livekit: { roomName: "mock-room", url: "wss://mock.livekit.local", accessToken: "mock-livekit-token", isMock: true },
+    },
+  };
+}
+
+async function setMockReady(sessionId) {
+  await delay(200);
+  const lobby = mockStore.lobbies.get(sessionId);
+  if (!lobby) throw new Error("존재하지 않는 세션입니다.");
+  lobby.participants.forEach((p) => {
+    p.ready = true;
+  });
+  const allReady = lobby.participants.length === lobby.maxParticipants
+    && lobby.participants.every((p) => p.ready);
+  if (allReady) {
+    lobby.status = "IN_PROGRESS";
+    const session = mockStore.sessions.get(sessionId);
+    if (session) session.status = "IN_PROGRESS";
+  }
+  return getMockLobby(sessionId);
 }
 
 async function endMockSession(sessionId, reason) {
@@ -277,4 +385,5 @@ export function isMockMode() {
 export function __resetMockStoreForTests() {
   mockStore.sessions.clear();
   mockStore.results.clear();
+  mockStore.lobbies.clear();
 }

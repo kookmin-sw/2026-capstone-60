@@ -75,7 +75,15 @@ export default function InterviewRoomView({
   // 현재는 2-state ("generating" / "answering") 만 사용. 추후 LiveKit audio
   // 트랙 감지로 "speaking" 분리 가능하도록 인터페이스만 3-state 로 열어둔다.
   ambientState = "answering",
+
+  targetIdentity = null,
+  myIdentity = null,
+  isGroup = false,
+  isHost = true,
 }) {
+  const turnHint = isGroup && targetIdentity
+    ? (targetIdentity === myIdentity ? "지금 답변할 차례입니다" : `답변 차례: ${targetIdentity}`)
+    : null;
   // prefers-reduced-motion 사용자에게는 모션 없이 정적 배경만 노출
   const reduceMotion = useReducedMotion();
 
@@ -243,6 +251,12 @@ export default function InterviewRoomView({
                 </div>
 
                 {/* Question Text */}
+                {turnHint && (
+                  <p className="text-sm font-medium text-blue-700 mb-3">{turnHint}</p>
+                )}
+                {!isHost && isGroup && (
+                  <p className="text-xs text-slate-500 mb-3">관전 모드 — 다음/종료는 호스트만 가능합니다</p>
+                )}
                 <AnimatePresence mode="wait">
                   <motion.h2
                     key={questionText}

@@ -40,6 +40,11 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
   const [logs, setLogs] = useState([]);
   // 단순 휴리스틱: 면접관 발화 직후 잠시 "ai", 그 외엔 "user"
   const [currentTurnRole, setCurrentTurnRole] = useState("waiting");
+  const [targetIdentity, setTargetIdentity] = useState(null);
+
+  const isGroup = session.mode === "GROUP";
+  const isHost = !isGroup || session.role === "HOST";
+  const myIdentity = session.myIdentity;
 
   const answerTimeLimitSeconds = session.answerTimeLimitSeconds || 90;
   const totalDurationSeconds = session.totalDurationSeconds || session.durationMinutes * 60;
@@ -114,23 +119,39 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
     try {
       const msg = JSON.parse(new TextDecoder().decode(payload));
       if (msg.type === "QUESTION") {
-        const { turnNumber, text } = msg.payload;
+        const { turnNumber, text, targetIdentity: target } = msg.payload || {};
         if (typeof turnNumber === "number" && turnNumber !== turnRef.current) {
           console.warn(`[InterviewRoom] 턴 번호 불일치: client=${turnRef.current}, agent=${turnNumber}.`);
           addLog("WARN", `턴 번호 불일치 감지 (서버=${turnRef.current}, 면접관=${turnNumber}). 면접관 값으로 갱신합니다.`);
           updateTurn(turnNumber);
         }
+        setTargetIdentity(target || null);
+        const isMyTurn = !target || !myIdentity || target === myIdentity;
         setCurrentQuestion(text);
         setWaitingForAgent(false);
         setWarningVisible(false);
-        setAnswerExpiresAt(Date.now() + answerTimeLimitSeconds * 1000);
-        setCurrentTurnRole("user");
+        if (isMyTurn) {
+          setAnswerExpiresAt(Date.now() + answerTimeLimitSeconds * 1000);
+          setCurrentTurnRole("user");
+          if (roomRef.current && isGroup) {
+            roomRef.current.localParticipant.setMicrophoneEnabled(true);
+            setIsMicOn(true);
+          }
+        } else {
+          setAnswerExpiresAt(null);
+          setCurrentTurnRole("waiting");
+          if (roomRef.current) {
+            roomRef.current.localParticipant.setMicrophoneEnabled(false);
+            setIsMicOn(false);
+          }
+          addLog("SYSTEM", `답변 차례: ${target}`);
+        }
         addLog("AI", `Q${turnNumber}. ${text}`);
       }
     } catch (e) {
       // 파싱 실패 시 무시
     }
-  }, [answerTimeLimitSeconds, updateTurn]);
+  }, [answerTimeLimitSeconds, updateTurn, myIdentity, isGroup]);
 
   useEffect(() => {
     if (session.livekit?.isMock) {
@@ -147,7 +168,9 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
     async function connectRoom() {
       try {
         await room.connect(session.livekit.url, session.livekit.accessToken);
-        await room.localParticipant.setMicrophoneEnabled(true);
+        const micOn = !isGroup || session.role === "HOST";
+        await room.localParticipant.setMicrophoneEnabled(micOn);
+        setIsMicOn(micOn);
         setIsConnected(true);
       } catch (error) {
         setConnectionError(error.message || "LiveKit 연결에 실패했습니다.");
@@ -160,7 +183,11 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
         const audioEl = track.attach();
         audioEl.id = `audio-${participant.identity}`;
         document.body.appendChild(audioEl);
-        setCurrentTurnRole("ai");
+        if (participant.identity?.startsWith("user-")) {
+          addLog("USER", `참가자 음성 연결: ${participant.identity}`);
+        } else {
+          setCurrentTurnRole("ai");
+        }
       }
     });
     room.on(RoomEvent.TrackUnsubscribed, (track) => {
@@ -206,7 +233,7 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
   }, [isConnected, waitingForAgent, session.livekit?.isMock]);
 
   const requestNextQuestion = async () => {
-    if (!canAskNextQuestion || ending) return;
+    if (!isHost || !canAskNextQuestion || ending) return;
     if (!nextGuard.tryAcquire()) return;
     setNextLoading(true);
     setCurrentTurnRole("ai");
@@ -339,8 +366,12 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
       isMicOn={isMicOn}
       onToggleMic={toggleMic}
       onNextQuestion={requestNextQuestion}
-      onEndInterview={endInterview}
-      canAskNext={canAskNextQuestion}
+      onEndInterview={isHost ? endInterview : () => {}}
+      canAskNext={isHost && canAskNextQuestion}
+      targetIdentity={targetIdentity}
+      myIdentity={myIdentity}
+      isGroup={isGroup}
+      isHost={isHost}
       nextLoading={nextLoading}
       ending={ending}
 
