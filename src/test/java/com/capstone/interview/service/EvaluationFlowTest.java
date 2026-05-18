@@ -48,7 +48,7 @@ class EvaluationFlowTest {
         evaluationService = new EvaluationService(
                 interviewRepository, interviewQnaRepository, llmClient, objectMapper);
         feedbackService = new FeedbackService(
-                interviewRepository, interviewQnaRepository, memberRepository);
+                interviewRepository, interviewQnaRepository, memberRepository, objectMapper);
 
         Member member = createMember(1L, "test1", "Tester");
         testInterview = createInterview(1L, "sess-test-0001", member, "BACKEND");
@@ -68,11 +68,15 @@ class EvaluationFlowTest {
                 .thenReturn(Optional.of(testInterview));
         when(interviewQnaRepository.findByInterviewOrderBySequenceNumberAsc(testInterview))
                 .thenReturn(testQnas);
+        for (InterviewQna qna : testQnas) {
+            when(interviewQnaRepository.findByInterviewAndSequenceNumber(testInterview, qna.getSequenceNumber()))
+                    .thenReturn(Optional.of(qna));
+        }
         when(interviewQnaRepository.saveAll(anyList()))
                 .thenAnswer(inv -> inv.getArgument(0));
         when(interviewRepository.save(any(Interview.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
-        when(interviewRepository.findByMemberIdOrderByCreatedAtDesc(1L))
+        when(interviewRepository.findByMemberIdAndStatusOrderByCreatedAtDesc(eq(1L), any()))
                 .thenReturn(List.of(testInterview));
         when(memberRepository.findByLoginId("test1"))
                 .thenReturn(Optional.of(member));
@@ -157,7 +161,6 @@ class EvaluationFlowTest {
         System.out.println("[Output] FeedbackListDto:");
         System.out.println("  sessionId: " + item.sessionId());
         System.out.println("  category: " + item.category());
-        System.out.println("  status: " + item.status());
         System.out.println("  overallScore: " + item.overallScore());
         System.out.println("  createdAt: " + item.createdAt());
 
@@ -194,6 +197,7 @@ class EvaluationFlowTest {
         setField(qna, "sequenceNumber", seq);
         setField(qna, "questionContent", question);
         setField(qna, "answerContent", answer);
+        setField(qna, "answerSummary", "[\"" + answer.replace("\"", "\\\"") + "\"]");
         setField(qna, "isFollowUp", followUp);
         setField(qna, "createdAt", LocalDateTime.now());
         setField(qna, "updatedAt", LocalDateTime.now());
