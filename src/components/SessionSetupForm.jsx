@@ -33,6 +33,7 @@ export default function SessionSetupForm({ onSubmit, isSubmitting }) {
   /* ── Interview settings ───────────────────── */
   const [jobField, setJobField]               = useState("BACKEND");
   const [durationMinutes, setDurationMinutes] = useState(15);
+  const [maxParticipants, setMaxParticipants] = useState(1);
 
   /* ── Mic ─────────────────────────────────── */
   const [audioPermission, setAudioPermission] = useState("idle");
@@ -321,6 +322,10 @@ export default function SessionSetupForm({ onSubmit, isSubmitting }) {
         <div className="confirm-item">
           <span>면접 시간</span>
           <strong>{durationMinutes}분</strong>
+        </div>
+        <div className="confirm-item">
+          <span>면접 인원</span>
+          <strong>{maxParticipants === 1 ? "혼자" : `${maxParticipants}명`}</strong>
         </div>
         <div className="confirm-item">
           <span>이력서</span>
