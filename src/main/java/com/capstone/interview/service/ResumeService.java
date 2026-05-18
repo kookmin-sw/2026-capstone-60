@@ -110,7 +110,7 @@ public class ResumeService {
 
     /**
      * 이력서를 삭제한다. 본인의 이력서만 삭제 가능.
-     * 면접 기록에서 참조 중인 이력서는 삭제할 수 없다.
+     * 면접 기록에서 참조 중인 경우 참조를 해제(NULL)한 뒤 삭제한다.
      */
     @Transactional
     public void deleteResume(String loginId, Long resumeId) {
@@ -124,9 +124,9 @@ public class ResumeService {
             throw new IllegalArgumentException("본인의 이력서만 삭제할 수 있습니다.");
         }
 
-        if (interviewRepository.existsByResumeId(resumeId)) {
-            throw new IllegalArgumentException("면접 기록에서 사용 중인 이력서는 삭제할 수 없습니다.");
-        }
+        // 면접 기록에서 이력서 참조 해제
+        interviewRepository.findByResumeId(resumeId)
+                .forEach(interview -> interview.clearResume());
 
         resumeRepository.delete(resume);
         log.info("[이력서 삭제] id={}, memberId={}", resumeId, member.getId());

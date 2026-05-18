@@ -226,4 +226,21 @@ public class InterviewService {
                     "IN_PROGRESS 상태에서만 가능합니다. 현재: " + interview.getStatus());
         }
     }
+
+    /**
+     * 면접 기록을 삭제한다. 본인의 면접 기록만 삭제 가능.
+     * 관련 QnA 데이터도 함께 삭제된다.
+     */
+    @Transactional
+    public void deleteSession(String sessionId) {
+        Interview interview = findInterviewOrThrow(sessionId);
+        verifyOwner(interview);
+
+        // QnA 데이터 먼저 삭제
+        interviewQnaRepository.deleteAllByInterview(interview);
+
+        // 면접 기록 삭제
+        interviewRepository.delete(interview);
+        log.info("[면접 기록 삭제] sessionId={}", sessionId);
+    }
 }
