@@ -203,11 +203,6 @@ public class InterviewService {
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime expiresAt = now.plusSeconds(ANSWER_TIME_LIMIT_SECONDS);
 
-        Long speakerId = interview.getCurrentSpeakerMemberId();
-        if (speakerId == null && interview.getMember() != null) {
-            speakerId = interview.getMember().getId();
-        }
-
         InterviewQna nextQna = InterviewQna.builder()
                 .interview(interview)
                 .sequenceNumber(nextTurnNumber)
@@ -215,19 +210,13 @@ public class InterviewService {
                 .answerContent("")
                 .startedAt(now)
                 .expiresAt(expiresAt)
-                .respondentMemberId(speakerId)
                 .build();
         interviewQnaRepository.save(nextQna);
 
         try {
-            Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("turnNumber", nextTurnNumber);
-            if (speakerId != null) {
-                payload.put("targetIdentity", "user-" + speakerId);
-            }
             Map<String, Object> message = Map.of(
                     "type", "NEXT",
-                    "payload", payload
+                    "payload", Map.of("turnNumber", nextTurnNumber)
             );
             liveKitRoomService.sendData(interview.getRoomName(), message);
         } catch (Exception e) {
@@ -288,8 +277,6 @@ public class InterviewService {
 
         List<InterviewParticipant> participants =
                 participantRepository.findByInterviewOrderByJoinedAtAsc(interview);
-        InterviewParticipant firstSpeaker = participants.get(0);
-        interview.setCurrentSpeakerMemberId(firstSpeaker.getMember().getId());
         interview.start();
         interviewRepository.save(interview);
 
@@ -317,8 +304,8 @@ public class InterviewService {
             throw new RuntimeException("Agent dispatch에 실패했습니다. 잠시 후 다시 시도해주세요.");
         }
 
-        initFirstTurn(interview, firstSpeaker.getMember().getId());
-        sendStartData(interview, participants, firstSpeaker);
+        initFirstTurn(interview, null);
+        sendStartData(interview);
     }
 
     private void dispatchAgentAndInitTurn(Interview interview, Resume resume, CoverLetter coverLetter,
@@ -362,24 +349,8 @@ public class InterviewService {
         interviewQnaRepository.save(firstTurn);
     }
 
-    private void sendStartData(Interview interview, List<InterviewParticipant> participants,
-                               InterviewParticipant firstSpeaker) {
-        List<Map<String, Object>> payloadParticipants = participants.stream()
-                .map(p -> Map.<String, Object>of(
-                        "memberId", p.getMember().getId(),
-                        "identity", p.liveKitIdentity(),
-                        "name", p.getMember().getName()
-                ))
-                .toList();
-
-        Map<String, Object> message = Map.of(
-                "type", "START",
-                "payload", Map.of(
-                        "participants", payloadParticipants,
-                        "currentSpeakerIndex", 0,
-                        "targetIdentity", firstSpeaker.liveKitIdentity()
-                )
-        );
+    private void sendStartData(Interview interview) {
+        Map<String, Object> message = Map.of("type", "START");
         try {
             liveKitRoomService.sendData(interview.getRoomName(), message);
         } catch (Exception e) {
