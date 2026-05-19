@@ -787,7 +787,7 @@ class GroupInterviewerAgent(Agent):
             session_id=self.group.session_id,
             turn_number=turn.turn_number or self.group.current_turn_number,
             question=turn.question,
-            intent=turn.intent,
+            question_types=turn.question_types,
             is_follow_up=turn.is_follow_up,
             answer=turn.answer,
             answer_summary=turn.answer_summary,
