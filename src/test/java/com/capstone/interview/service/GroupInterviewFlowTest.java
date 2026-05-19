@@ -72,6 +72,35 @@ class GroupInterviewFlowTest {
     }
 
     @Test
+    void createSoloSession_savesHostParticipantBeforeDispatch() {
+        loginAs(host);
+        when(memberRepository.findByLoginId("host")).thenReturn(Optional.of(host));
+        when(interviewRepository.save(any())).thenAnswer(inv -> {
+            Interview i = inv.getArgument(0);
+            setId(i, 11L);
+            return i;
+        });
+        when(participantRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(interviewQnaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        SessionCreateResponse response = interviewService.createSession(
+                new SessionCreateRequest(null, null, "BACKEND", 15, 1));
+
+        assertEquals("IN_PROGRESS", response.data().status());
+        assertEquals("SOLO", response.data().mode());
+        assertEquals(1, response.data().maxParticipants());
+        verify(participantRepository).save(argThat(participant ->
+                participant.getInterview().getId().equals(11L)
+                        && participant.getMember().getId().equals(host.getId())
+                        && participant.getRole() == ParticipantRole.HOST));
+
+        var order = inOrder(participantRepository, agentDispatchService);
+        order.verify(participantRepository).save(any(InterviewParticipant.class));
+        order.verify(agentDispatchService).dispatch(
+                eq("room-test"), anyString(), eq("BACKEND"), anyString(), anyString(), eq(900), anyInt());
+    }
+
+    @Test
     void autoStart_whenAllReady() {
         Interview interview = Interview.builder()
                 .member(host)
