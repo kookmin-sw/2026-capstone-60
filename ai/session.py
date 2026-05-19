@@ -99,13 +99,17 @@ class InterviewSession:
         return messages
 
     def get_asked_topics(self) -> str:
-        """새 주제 질문 생성 시 '이미 다룬 내용' 주입용 텍스트."""
+        """새 주제 질문 생성 시 '이미 다룬 내용' 주입용 텍스트. 답변 요약도 포함."""
         if not self.history:
             return "(아직 질문한 내용 없음)"
-        return "\n".join(
-            f"- 질문: {turn.question} (유형: {turn.question_types})"
-            for turn in self.history
-        )
+        parts = []
+        for turn in self.history:
+            summary_text = ", ".join(turn.answer_summary) if turn.answer_summary else ""
+            line = f"- 질문: {turn.question} (유형: {turn.question_types})"
+            if summary_text:
+                line += f"\n  답변에서 언급된 내용: {summary_text}"
+            parts.append(line)
+        return "\n".join(parts)
 
 
 @dataclass
