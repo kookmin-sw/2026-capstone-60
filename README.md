@@ -112,39 +112,7 @@ python agent.py
 └── README.md
 ```
 
-## 7. 소개 페이지 개발
-
-이 저장소 루트에는 GitHub Pages용 Intertalk 소개 페이지가 포함되어 있습니다.
-
-```bash
-npm install
-npm run dev
-```
-
-### 빌드
-
-```bash
-npm run build
-npm run preview
-```
-
-### GitHub Pages
-
-Vite `base`는 다음 경로로 설정되어 있습니다.
-
-```text
-/2026-capstone-60/
-```
-
-예상 공개 주소:
-
-```text
-https://kookmin-sw.github.io/2026-capstone-60/
-```
-
-배포 workflow는 `.github/workflows/deploy.yml`에 있습니다.
-
-## 8. 관련 링크
+## 7. 관련 링크
 
 - [Backend Repository](https://github.com/capstone-ai-mock-interview/backend)
 - [Frontend Repository](https://github.com/capstone-ai-mock-interview/frontend)
