@@ -39,10 +39,10 @@
 **AWS 캡스톤디자인 60팀**
 
 | 이름 | 학번 | 담당 |
-|------|------|------|
-| 김준범 | 20203048 | 프론트엔드, 인프라/배포 |
-| 정은미 | 20220792 | 면접 시작~종료 흐름, DB 설계 |
-| 최현택 | 20203154 | LLM 평가 + 피드백, 마이페이지, CI/CD |
+|-------|------|------|
+| 김준범 | 20203048 | 면접 시작~종료 흐름, DB 설계 |
+| 정은미 | 20220792 | LLM 평가 + 피드백, 디자인|
+| 최현택 | 20203154 | 프론트엔드, 인프라/배포, 마이페이지, CI/CD |
 | 함태원 | 20213095 | AI 질문 생성, RAG 파이프라인, 크롤링 |
 
 ## 4. 사용법
@@ -112,7 +112,7 @@ python -m pipeline.run_crawl --sync --kb-id MVJMHC0YM2 --data-source-id RDWXCFKH
 ```
 ├── backend/              # Spring Boot 메인 서버
 ├── frontend/             # React 프론트엔드
-├── interview-agent/      # LiveKit Agent + RAG 파이프라인
+├── livekit-agent/      # LiveKit Agent + RAG 파이프라인
 │   ├── agent.py          # LiveKit Agent 메인
 │   ├── ai/              # LLM 서비스, 프롬프트, 세션 관리
 │   └── pipeline/        # 크롤링 + S3 업로드
