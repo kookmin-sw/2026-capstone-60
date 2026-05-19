@@ -105,7 +105,8 @@ class GroupInterviewFlowTest {
 
         assertEquals("IN_PROGRESS", lobby.data().status());
         verify(agentDispatchService).dispatchGroup(any(), eq("sess-group-1"), any(), any(), any(), anyInt(), anyInt(), eq(2), anyList());
-        verify(liveKitRoomService).sendData(eq("room-1"), argThat(m -> "START".equals(m.get("type"))));
+        verify(liveKitRoomService).sendData(eq("room-1"), argThat(m ->
+                "START".equals(m.get("type")) && !m.containsKey("payload")));
     }
 
     private void loginAs(Member member) {
