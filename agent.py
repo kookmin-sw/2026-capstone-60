@@ -311,10 +311,30 @@ class InterviewerAgent(Agent):
         repeat_keywords = ("다시", "한번 더", "못 들었", "다시 한번", "뭐라고", "한 번 더",
                            "듣고싶", "듣고 싶", "다시 들", "한번만 더", "다시요", "뭐라고요")
         if answer.strip() and any(kw in answer for kw in repeat_keywords) and len(answer.strip()) < 30:
-            last_question = self.interview.history[-1].question if self.interview.history else None
-            if last_question:
+            last_turn = self.interview.history[-1] if self.interview.history else None
+            if last_turn:
                 logger.info("[질문 반복 요청] answer=%s", answer.strip())
-                await self._say(last_question)
+                await self._say(last_turn.question)
+                # 같은 턴 번호로 QUESTION publish → 프론트가 턴을 올리지 않도록
+                try:
+                    payload = {
+                        "type": "QUESTION",
+                        "payload": {
+                            "turnNumber": len(self.interview.history),
+                            "text": last_turn.question,
+                            "intent": last_turn.question_types,
+                            "isFollowUp": last_turn.is_follow_up,
+                            "parentTurnNumber": last_turn.parent_turn_number,
+                            "isRepeat": True,
+                        },
+                    }
+                    await self.session.room_io.room.local_participant.publish_data(
+                        payload=json.dumps(payload).encode("utf-8"),
+                        reliable=True,
+                        topic="interview",
+                    )
+                except Exception as e:
+                    logger.warning("[QUESTION repeat publish 실패] %s", e)
                 return
 
         self.interview.add_answer(answer)
