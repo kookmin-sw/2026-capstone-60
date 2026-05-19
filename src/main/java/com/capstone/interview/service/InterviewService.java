@@ -66,14 +66,7 @@ public class InterviewService {
         if (mode == InterviewMode.GROUP) {
             interview.enterWaitingLobby();
             interviewRepository.save(interview);
-            InterviewParticipant hostParticipant = InterviewParticipant.builder()
-                    .interview(interview)
-                    .member(host)
-                    .role(ParticipantRole.HOST)
-                    .resume(resume)
-                    .ready(false)
-                    .build();
-            participantRepository.save(hostParticipant);
+            InterviewParticipant hostParticipant = saveHostParticipant(interview, host, resume);
 
             String token = liveKitService.generateToken(roomName, hostParticipant.liveKitIdentity());
             return buildSessionResponse(interview, token, totalDurationSeconds);
@@ -81,10 +74,11 @@ public class InterviewService {
 
         interview.start();
         interviewRepository.save(interview);
+        InterviewParticipant hostParticipant = saveHostParticipant(interview, host, resume);
         dispatchAgentAndInitTurn(interview, resume, coverLetter, request.jobField(),
-                totalDurationSeconds, List.of(hostParticipantMeta(host, resume)));
+                totalDurationSeconds, List.of(participantMeta(hostParticipant)));
 
-        String token = liveKitService.generateToken(roomName, "user-" + host.getId());
+        String token = liveKitService.generateToken(roomName, hostParticipant.liveKitIdentity());
         return buildSessionResponse(interview, token, totalDurationSeconds);
     }
 
@@ -376,10 +370,23 @@ public class InterviewService {
         return meta;
     }
 
-    private Map<String, Object> hostParticipantMeta(Member host, Resume resume) {
+    private InterviewParticipant saveHostParticipant(Interview interview, Member host, Resume resume) {
+        InterviewParticipant hostParticipant = InterviewParticipant.builder()
+                .interview(interview)
+                .member(host)
+                .role(ParticipantRole.HOST)
+                .resume(resume)
+                .ready(false)
+                .build();
+        return participantRepository.save(hostParticipant);
+    }
+
+    private Map<String, Object> participantMeta(InterviewParticipant participant) {
+        Member host = participant.getMember();
+        Resume resume = participant.getResume();
         return Map.of(
                 "memberId", host.getId(),
-                "identity", "user-" + host.getId(),
+                "identity", participant.liveKitIdentity(),
                 "name", host.getName(),
                 "resumeText", resume != null && resume.getOriginalText() != null ? resume.getOriginalText() : ""
         );
