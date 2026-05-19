@@ -88,3 +88,17 @@ async function fetchMockInterviewRecordDetail(recordId) {
   }
   return { success: true, data: record };
 }
+
+/**
+ * 면접 기록을 삭제한다.
+ *
+ * @param {string} sessionId - 삭제할 면접 세션 ID
+ */
+export async function deleteInterviewRecord(sessionId) {
+  if (USE_MOCK_HISTORY) {
+    const records = getMockRecords().filter((r) => r.sessionId !== sessionId);
+    setMockRecords(records);
+    return { success: true };
+  }
+  return request(`/sessions/${sessionId}`, { method: "DELETE" });
+}

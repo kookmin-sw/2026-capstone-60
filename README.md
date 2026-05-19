@@ -128,6 +128,20 @@ src/
 
 ---
 
+## 그룹 면접 초대 링크
+
+호스트가 `maxParticipants >= 2`로 세션을 만들면 대기실에서 아래 형식의 **초대 URL**을 복사해 공유합니다.
+
+```
+https://capstonefront.vercel.app/interview/join/{sessionId}
+```
+
+게스트 동작: 링크 접속 → (비로그인 시) 로그인/회원가입 → **`POST /v1/interviews/sessions/{sessionId}/join`** 호출 → 로비(`/interview/lobby`) 이동 → 준비 완료(`PATCH .../participants/me/ready`).
+
+프로덕션 HTTPS에서는 `vercel.json`이 `/v1/*` 요청을 백엔드(`http://23.22.137.145:8080`)로 프록시해 Mixed Content를 피합니다. SPA 직접 URL 접근은 `index.html`로 fallback됩니다.
+
+---
+
 ## 백엔드 연동 구조
 
 ```

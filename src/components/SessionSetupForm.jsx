@@ -12,6 +12,7 @@ const JOB_FIELDS = [
 ];
 
 const DURATION_OPTIONS = [10, 15, 20, 30, 45, 60];
+const PARTICIPANT_OPTIONS = [1, 2, 3, 4];
 
 const STEPS = [
   { id: 1, label: "이력서 선택",   skippable: true },
@@ -32,6 +33,7 @@ export default function SessionSetupForm({ onSubmit, isSubmitting }) {
   /* ── Interview settings ───────────────────── */
   const [jobField, setJobField]               = useState("BACKEND");
   const [durationMinutes, setDurationMinutes] = useState(15);
+  const [maxParticipants, setMaxParticipants] = useState(1);
 
   /* ── Mic ─────────────────────────────────── */
   const [audioPermission, setAudioPermission] = useState("idle");
@@ -129,6 +131,7 @@ export default function SessionSetupForm({ onSubmit, isSubmitting }) {
       coverLetter: selectedCoverId ? Number(selectedCoverId) : null,
       jobField,
       durationMinutes: Number(durationMinutes),
+      maxParticipants: Number(maxParticipants),
     });
   };
 
@@ -193,6 +196,27 @@ export default function SessionSetupForm({ onSubmit, isSubmitting }) {
             </button>
           ))}
         </div>
+      </label>
+
+      <label className="field">
+        <span>면접 인원</span>
+        <div className="duration-grid">
+          {PARTICIPANT_OPTIONS.map((n) => (
+            <button
+              key={n}
+              type="button"
+              className={`duration-chip ${maxParticipants === n ? "selected" : ""}`}
+              onClick={() => setMaxParticipants(n)}
+            >
+              {n === 1 ? "혼자" : `${n}명`}
+            </button>
+          ))}
+        </div>
+        {maxParticipants > 1 && (
+          <p className="subtext compact" style={{ marginTop: "0.5rem" }}>
+            방 생성 후 세션 ID를 친구에게 공유하고, 모두 준비 완료 시 면접이 시작됩니다.
+          </p>
+        )}
       </label>
 
       <label className="field">
@@ -298,6 +322,10 @@ export default function SessionSetupForm({ onSubmit, isSubmitting }) {
         <div className="confirm-item">
           <span>면접 시간</span>
           <strong>{durationMinutes}분</strong>
+        </div>
+        <div className="confirm-item">
+          <span>면접 인원</span>
+          <strong>{maxParticipants === 1 ? "혼자" : `${maxParticipants}명`}</strong>
         </div>
         <div className="confirm-item">
           <span>이력서</span>

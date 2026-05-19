@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "re
 import { deleteMe, fetchMe, login, logout, signup, updateMe } from "./api/authApi";
 import ApiTestPage from "./components/ApiTestPage";
 import {
+  deleteInterviewRecord,
   fetchInterviewRecordDetail,
   fetchInterviewRecords,
   saveInterviewRecord,
@@ -12,6 +13,8 @@ import HomeView from "./components/HomeView";
 import HistoryDetailView from "./components/HistoryDetailView";
 import HistoryListView from "./components/HistoryListView";
 import InterviewRoom from "./components/InterviewRoom";
+import JoinInterviewView from "./components/JoinInterviewView";
+import LobbyView from "./components/LobbyView";
 import LoginForm from "./components/LoginForm";
 import MyPage from "./components/MyPage";
 import ResultView from "./components/ResultView";
@@ -33,11 +36,29 @@ const ROUTE = {
   MYPAGE: "/mypage",
   API_TEST: "/api-test",
   SETUP: "/interview/setup",
+  LOBBY: "/interview/lobby",
+  JOIN: "/interview/join",
   ROOM: "/interview/room",
   EVALUATING: "/interview/evaluating",
   RESULT: "/interview/result",
   HISTORY: "/history",
 };
+
+function loginUrlWithRedirect(pathname) {
+  const safePath =
+    pathname && pathname.startsWith("/") && !pathname.startsWith("//")
+      ? pathname
+      : ROUTE.HOME;
+  return `${ROUTE.LOGIN}?redirect=${encodeURIComponent(safePath)}`;
+}
+
+function resolveRedirectTarget(search) {
+  const redirect = new URLSearchParams(search).get("redirect");
+  if (redirect && redirect.startsWith("/") && !redirect.startsWith("//")) {
+    return redirect;
+  }
+  return ROUTE.HOME;
+}
 
 export default function App() {
   const navigate = useNavigate();
@@ -67,23 +88,30 @@ export default function App() {
       setResult(null);
       setHistoryRecords([]);
       setHistoryDetail(null);
-      navigate(ROUTE.LOGIN, { replace: true });
+      navigate(loginUrlWithRedirect(location.pathname), { replace: true });
     };
     window.addEventListener("auth:unauthorized", handleUnauthorized);
     return () => window.removeEventListener("auth:unauthorized", handleUnauthorized);
-  }, [navigate]);
+  }, [navigate, location.pathname]);
 
   useEffect(() => {
     async function bootstrapAuth() {
       try {
         const profile = await fetchMe();
         setUser(profile);
-        if (location.pathname === ROUTE.LOGIN || location.pathname === ROUTE.SIGNUP) {
+        if (
+          location.pathname === ROUTE.LOGIN &&
+          new URLSearchParams(location.search).has("redirect")
+        ) {
+          navigate(resolveRedirectTarget(location.search), { replace: true });
+        } else if (location.pathname === ROUTE.LOGIN || location.pathname === ROUTE.SIGNUP) {
           navigate(ROUTE.HOME, { replace: true });
         }
       } catch {
         const protectedPaths = [
           ROUTE.SETUP,
+          ROUTE.LOBBY,
+          ROUTE.JOIN,
           ROUTE.ROOM,
           ROUTE.EVALUATING,
           ROUTE.RESULT,
@@ -91,7 +119,7 @@ export default function App() {
           ROUTE.MYPAGE,
         ];
         if (protectedPaths.some((p) => location.pathname.startsWith(p))) {
-          navigate(ROUTE.LOGIN, { replace: true });
+          navigate(loginUrlWithRedirect(location.pathname), { replace: true });
         }
       } finally {
         setBootstrapping(false);
@@ -106,7 +134,12 @@ export default function App() {
       setAuthLoading(true);
       setError("");
       await signup(loginId, password, name);
-      navigate(ROUTE.LOGIN);
+      const redirect = new URLSearchParams(location.search).get("redirect");
+      navigate(
+        redirect
+          ? `${ROUTE.LOGIN}?redirect=${encodeURIComponent(redirect)}`
+          : ROUTE.LOGIN
+      );
     } catch (signupError) {
       setError(signupError.message);
     } finally {
@@ -114,26 +147,56 @@ export default function App() {
     }
   };
 
+  const buildSessionState = (data, payload, extras = {}) => ({
+    sessionId: data.sessionId,
+    jobField: payload?.jobField ?? extras.jobField,
+    durationMinutes: payload?.durationMinutes ?? extras.durationMinutes,
+    livekit: data.livekit,
+    answerTimeLimitSeconds: data.answerTimeLimitSeconds || 90,
+    totalDurationSeconds: data.totalDurationSeconds || (payload?.durationMinutes ?? 15) * 60,
+    mode: data.mode || (data.maxParticipants > 1 ? "GROUP" : "SOLO"),
+    maxParticipants: data.maxParticipants ?? 1,
+    status: data.status,
+    role: extras.role || "HOST",
+    myIdentity: extras.myIdentity || (user?.id ? `user-${user.id}` : undefined),
+  });
+
   const startSession = async (payload) => {
     try {
       setStartLoading(true);
       setError("");
       const response = await createInterviewSession(payload);
       const data = response.data;
-      setSession({
-        sessionId: data.sessionId,
-        jobField: payload.jobField,
-        durationMinutes: payload.durationMinutes,
-        livekit: data.livekit,
-        answerTimeLimitSeconds: data.answerTimeLimitSeconds || 90,
-        totalDurationSeconds: data.totalDurationSeconds || payload.durationMinutes * 60,
+      const sessionState = buildSessionState(data, payload, {
+        role: "HOST",
+        myIdentity: user?.id ? `user-${user.id}` : undefined,
       });
-      navigate(ROUTE.ROOM);
+      setSession(sessionState);
+      if (sessionState.mode === "GROUP" || sessionState.maxParticipants > 1) {
+        navigate(ROUTE.LOBBY);
+      } else {
+        navigate(ROUTE.ROOM);
+      }
     } catch (sessionError) {
       setError(sessionError.message);
     } finally {
       setStartLoading(false);
     }
+  };
+
+  const handleEnterRoomFromLobby = (updatedSession) => {
+    setSession((prev) => ({ ...prev, ...updatedSession }));
+    navigate(ROUTE.ROOM);
+  };
+
+  const handleJoinedSession = (joinedSession) => {
+    setSession({
+      ...joinedSession,
+      answerTimeLimitSeconds: 90,
+      durationMinutes: joinedSession.durationMinutes ?? 15,
+      totalDurationSeconds: joinedSession.totalDurationSeconds ?? 15 * 60,
+      jobField: joinedSession.jobField ?? "BACKEND",
+    });
   };
 
   const signIn = async (loginId, password) => {
@@ -142,7 +205,7 @@ export default function App() {
       setError("");
       const authUser = await login(loginId, password);
       setUser(authUser);
-      navigate(ROUTE.HOME);
+      navigate(resolveRedirectTarget(location.search));
     } catch (loginError) {
       setError(loginError.message);
     } finally {
@@ -298,6 +361,15 @@ export default function App() {
     }
   };
 
+  const handleDeleteRecord = async (sessionId) => {
+    try {
+      await deleteInterviewRecord(sessionId);
+      setHistoryRecords((prev) => prev.filter((r) => r.sessionId !== sessionId));
+    } catch (deleteError) {
+      setError(deleteError.message || "면접 기록 삭제에 실패했습니다.");
+    }
+  };
+
   const reset = () => {
     setSession(null);
     setResult(null);
@@ -389,6 +461,34 @@ export default function App() {
           }
         />
         <Route
+          path={ROUTE.LOBBY}
+          element={
+            user && session ? (
+              <LobbyView
+                session={session}
+                onEnterRoom={handleEnterRoomFromLobby}
+                onError={setError}
+              />
+            ) : (
+              <Navigate to={ROUTE.SETUP} replace />
+            )
+          }
+        />
+        <Route
+          path={`${ROUTE.JOIN}/:sessionId`}
+          element={
+            user ? (
+              <JoinInterviewView
+                user={user}
+                onJoined={handleJoinedSession}
+                onError={setError}
+              />
+            ) : (
+              <Navigate to={loginUrlWithRedirect(location.pathname)} replace />
+            )
+          }
+        />
+        <Route
           path={ROUTE.ROOM}
           element={
             user && session ? (
@@ -426,6 +526,7 @@ export default function App() {
                 loading={historyLoading}
                 records={historyRecords}
                 onSelectRecord={openHistoryDetail}
+                onDeleteRecord={handleDeleteRecord}
               />
             ) : (
               <Navigate to={ROUTE.LOGIN} replace />

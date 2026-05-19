@@ -29,11 +29,9 @@ const HIDDEN_LOG_TYPES = new Set(["SYSTEM"]);
 export default function InterviewRoom({ session, onSessionEnd, ending }) {
   const roomRef = useRef(null);
   const myIdentityRef = useRef("");
-  const activeTargetIdentityRef = useRef(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isMicOn, setIsMicOn] = useState(true);
-  const [myIdentity, setMyIdentity] = useState("");
-  const [activeTargetIdentity, setActiveTargetIdentity] = useState(null);
+  const [localIdentity, setLocalIdentity] = useState("");
   const [connectionError, setConnectionError] = useState("");
   const [warningVisible, setWarningVisible] = useState(false);
   const [turn, setTurn] = useState(1);
@@ -44,6 +42,12 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
   const [logs, setLogs] = useState([]);
   // 단순 휴리스틱: 면접관 발화 직후 잠시 "ai", 그 외엔 "user"
   const [currentTurnRole, setCurrentTurnRole] = useState("waiting");
+  const [targetIdentity, setTargetIdentity] = useState(null);
+
+  const isGroup = session.mode === "GROUP";
+  const isHost = !isGroup || session.role === "HOST";
+  const myIdentity = session.myIdentity || localIdentity;
+  myIdentityRef.current = myIdentity || "";
 
   const answerTimeLimitSeconds = session.answerTimeLimitSeconds || 90;
   const totalDurationSeconds = session.totalDurationSeconds || session.durationMinutes * 60;
@@ -77,17 +81,14 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
     }
   }, [session.livekit?.isMock]);
 
-  const syncMicPublishForTarget = useCallback(async (targetIdentity) => {
-    activeTargetIdentityRef.current = targetIdentity || null;
-    setActiveTargetIdentity(targetIdentity || null);
-
-    if (!targetIdentity) {
+  const syncMicPublishForTarget = useCallback(async (nextTargetIdentity) => {
+    if (!isGroup || !nextTargetIdentity) {
       await setLocalMicPublish(true);
       return;
     }
 
-    await setLocalMicPublish(targetIdentity === myIdentityRef.current);
-  }, [setLocalMicPublish]);
+    await setLocalMicPublish(nextTargetIdentity === myIdentityRef.current);
+  }, [isGroup, setLocalMicPublish]);
 
   function addLog(type, text) {
     setLogs((prev) => [
@@ -146,24 +147,32 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
     try {
       const msg = JSON.parse(new TextDecoder().decode(payload));
       if (msg.type === "QUESTION") {
-        const { turnNumber, text, targetIdentity } = msg.payload;
+        const { turnNumber, text, targetIdentity: target } = msg.payload || {};
         if (typeof turnNumber === "number" && turnNumber !== turnRef.current) {
           console.warn(`[InterviewRoom] 턴 번호 불일치: client=${turnRef.current}, agent=${turnNumber}.`);
           addLog("WARN", `턴 번호 불일치 감지 (서버=${turnRef.current}, 면접관=${turnNumber}). 면접관 값으로 갱신합니다.`);
           updateTurn(turnNumber);
         }
+        setTargetIdentity(target || null);
+        const isMyTurn = !target || !myIdentity || target === myIdentity;
         setCurrentQuestion(text);
         setWaitingForAgent(false);
         setWarningVisible(false);
-        setAnswerExpiresAt(Date.now() + answerTimeLimitSeconds * 1000);
-        setCurrentTurnRole("user");
-        syncMicPublishForTarget(targetIdentity);
+        if (isMyTurn) {
+          setAnswerExpiresAt(Date.now() + answerTimeLimitSeconds * 1000);
+          setCurrentTurnRole("user");
+        } else {
+          setAnswerExpiresAt(null);
+          setCurrentTurnRole("waiting");
+          addLog("SYSTEM", `답변 차례: ${target}`);
+        }
+        syncMicPublishForTarget(target);
         addLog("AI", `Q${turnNumber}. ${text}`);
       }
     } catch (e) {
       // 파싱 실패 시 무시
     }
-  }, [answerTimeLimitSeconds, syncMicPublishForTarget, updateTurn]);
+  }, [answerTimeLimitSeconds, syncMicPublishForTarget, updateTurn, myIdentity]);
 
   useEffect(() => {
     if (session.livekit?.isMock) {
@@ -180,9 +189,9 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
     async function connectRoom() {
       try {
         await room.connect(session.livekit.url, session.livekit.accessToken);
-        myIdentityRef.current = room.localParticipant.identity;
-        setMyIdentity(room.localParticipant.identity);
-        await syncMicPublishForTarget(activeTargetIdentityRef.current);
+        setLocalIdentity(room.localParticipant.identity);
+        myIdentityRef.current = session.myIdentity || room.localParticipant.identity;
+        await setLocalMicPublish(!isGroup);
         setIsConnected(true);
       } catch (error) {
         setConnectionError(error.message || "LiveKit 연결에 실패했습니다.");
@@ -195,7 +204,11 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
         const audioEl = track.attach();
         audioEl.id = `audio-${participant.identity}`;
         document.body.appendChild(audioEl);
-        setCurrentTurnRole("ai");
+        if (participant.identity?.startsWith("user-")) {
+          addLog("USER", `참가자 음성 연결: ${participant.identity}`);
+        } else {
+          setCurrentTurnRole("ai");
+        }
       }
     });
     room.on(RoomEvent.TrackUnsubscribed, (track) => {
@@ -241,7 +254,7 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
   }, [isConnected, waitingForAgent, session.livekit?.isMock]);
 
   const requestNextQuestion = async () => {
-    if (!canAskNextQuestion || ending) return;
+    if (!isHost || !canAskNextQuestion || ending) return;
     if (!nextGuard.tryAcquire()) return;
     setNextLoading(true);
     setCurrentTurnRole("ai");
@@ -295,7 +308,7 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
   const toggleMic = async () => {
     if (session.livekit?.isMock) { setIsMicOn((prev) => !prev); return; }
     if (!roomRef.current) return;
-    if (activeTargetIdentity && activeTargetIdentity !== myIdentity) {
+    if (isGroup && targetIdentity && targetIdentity !== myIdentity) {
       await setLocalMicPublish(false);
       return;
     }
@@ -375,11 +388,15 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
       errorMessage=""
 
       isMicOn={isMicOn}
-      isMicToggleDisabled={Boolean(activeTargetIdentity && activeTargetIdentity !== myIdentity)}
+      isMicToggleDisabled={Boolean(isGroup && targetIdentity && targetIdentity !== myIdentity)}
       onToggleMic={toggleMic}
       onNextQuestion={requestNextQuestion}
-      onEndInterview={endInterview}
-      canAskNext={canAskNextQuestion}
+      onEndInterview={isHost ? endInterview : () => {}}
+      canAskNext={isHost && canAskNextQuestion}
+      targetIdentity={targetIdentity}
+      myIdentity={myIdentity}
+      isGroup={isGroup}
+      isHost={isHost}
       nextLoading={nextLoading}
       ending={ending}
 
