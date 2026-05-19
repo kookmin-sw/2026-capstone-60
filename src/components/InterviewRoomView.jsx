@@ -62,6 +62,7 @@ export default function InterviewRoomView({
   errorMessage = "",
 
   isMicOn = false,
+  isMicToggleDisabled = false,
   onToggleMic = () => {},
   onNextQuestion = () => {},
   onEndInterview = () => {},
@@ -430,6 +431,7 @@ export default function InterviewRoomView({
               variant={isMicOn ? "default" : "secondary"}
               size="icon"
               onClick={onToggleMic}
+              disabled={isMicToggleDisabled || ending}
               className={cn(
                 "rounded-full size-14 relative z-10 transition-all",
                 isMicOn
