@@ -28,8 +28,10 @@ const HIDDEN_LOG_TYPES = new Set(["SYSTEM"]);
 
 export default function InterviewRoom({ session, onSessionEnd, ending }) {
   const roomRef = useRef(null);
+  const myIdentityRef = useRef("");
   const [isConnected, setIsConnected] = useState(false);
   const [isMicOn, setIsMicOn] = useState(true);
+  const [localIdentity, setLocalIdentity] = useState("");
   const [connectionError, setConnectionError] = useState("");
   const [warningVisible, setWarningVisible] = useState(false);
   const [turn, setTurn] = useState(1);
@@ -44,7 +46,8 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
 
   const isGroup = session.mode === "GROUP";
   const isHost = !isGroup || session.role === "HOST";
-  const myIdentity = session.myIdentity;
+  const myIdentity = session.myIdentity || localIdentity;
+  myIdentityRef.current = myIdentity || "";
 
   const answerTimeLimitSeconds = session.answerTimeLimitSeconds || 90;
   const totalDurationSeconds = session.totalDurationSeconds || session.durationMinutes * 60;
@@ -61,6 +64,31 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
     turnRef.current = next;
     setTurn(next);
   }, []);
+
+  const setLocalMicPublish = useCallback(async (enabled) => {
+    const room = roomRef.current;
+    if (!room || session.livekit?.isMock) {
+      setIsMicOn(enabled);
+      return;
+    }
+
+    try {
+      await room.localParticipant.setMicrophoneEnabled(enabled);
+      setIsMicOn(enabled);
+    } catch (error) {
+      console.warn("[InterviewRoom] microphone publish update failed", error);
+      addLog("WARN", "마이크 상태 변경에 실패했습니다. 브라우저 권한 또는 장치 상태를 확인해주세요.");
+    }
+  }, [session.livekit?.isMock]);
+
+  const syncMicPublishForTarget = useCallback(async (nextTargetIdentity) => {
+    if (!isGroup || !nextTargetIdentity) {
+      await setLocalMicPublish(true);
+      return;
+    }
+
+    await setLocalMicPublish(nextTargetIdentity === myIdentityRef.current);
+  }, [isGroup, setLocalMicPublish]);
 
   function addLog(type, text) {
     setLogs((prev) => [
@@ -133,25 +161,18 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
         if (isMyTurn) {
           setAnswerExpiresAt(Date.now() + answerTimeLimitSeconds * 1000);
           setCurrentTurnRole("user");
-          if (roomRef.current && isGroup) {
-            roomRef.current.localParticipant.setMicrophoneEnabled(true);
-            setIsMicOn(true);
-          }
         } else {
           setAnswerExpiresAt(null);
           setCurrentTurnRole("waiting");
-          if (roomRef.current) {
-            roomRef.current.localParticipant.setMicrophoneEnabled(false);
-            setIsMicOn(false);
-          }
           addLog("SYSTEM", `답변 차례: ${target}`);
         }
+        syncMicPublishForTarget(target);
         addLog("AI", `Q${turnNumber}. ${text}`);
       }
     } catch (e) {
       // 파싱 실패 시 무시
     }
-  }, [answerTimeLimitSeconds, updateTurn, myIdentity, isGroup]);
+  }, [answerTimeLimitSeconds, syncMicPublishForTarget, updateTurn, myIdentity]);
 
   useEffect(() => {
     if (session.livekit?.isMock) {
@@ -168,9 +189,9 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
     async function connectRoom() {
       try {
         await room.connect(session.livekit.url, session.livekit.accessToken);
-        const micOn = !isGroup || session.role === "HOST";
-        await room.localParticipant.setMicrophoneEnabled(micOn);
-        setIsMicOn(micOn);
+        setLocalIdentity(room.localParticipant.identity);
+        myIdentityRef.current = session.myIdentity || room.localParticipant.identity;
+        await setLocalMicPublish(!isGroup);
         setIsConnected(true);
       } catch (error) {
         setConnectionError(error.message || "LiveKit 연결에 실패했습니다.");
@@ -287,9 +308,12 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
   const toggleMic = async () => {
     if (session.livekit?.isMock) { setIsMicOn((prev) => !prev); return; }
     if (!roomRef.current) return;
+    if (isGroup && targetIdentity && targetIdentity !== myIdentity) {
+      await setLocalMicPublish(false);
+      return;
+    }
     const next = !isMicOn;
-    await roomRef.current.localParticipant.setMicrophoneEnabled(next);
-    setIsMicOn(next);
+    await setLocalMicPublish(next);
   };
 
   const endInterview = async () => { await onSessionEnd("USER_STOP"); };
@@ -364,6 +388,7 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
       errorMessage=""
 
       isMicOn={isMicOn}
+      isMicToggleDisabled={Boolean(isGroup && targetIdentity && targetIdentity !== myIdentity)}
       onToggleMic={toggleMic}
       onNextQuestion={requestNextQuestion}
       onEndInterview={isHost ? endInterview : () => {}}
