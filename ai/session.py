@@ -17,6 +17,7 @@ class ConversationTurn:
     turn_number: int = 0
     answer: str = ""
     is_follow_up: bool = False
+    parent_turn_number: int = 0
     question_types: str = ""
     answer_summary: list[str] = field(default_factory=list)
     decision: str = ""
@@ -40,12 +41,14 @@ class InterviewSession:
         is_follow_up: bool = False,
         question_types: str = "",
         turn_number: int = 0,
+        parent_turn_number: int = 0,
     ) -> None:
         """새 질문을 기록한다."""
         self.history.append(ConversationTurn(
             question=question,
             turn_number=turn_number,
             is_follow_up=is_follow_up,
+            parent_turn_number=parent_turn_number,
             question_types=question_types,
         ))
 
