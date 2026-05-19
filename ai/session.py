@@ -17,7 +17,7 @@ class ConversationTurn:
     turn_number: int = 0
     answer: str = ""
     is_follow_up: bool = False
-    intent: str = ""
+    question_types: str = ""
     answer_summary: list[str] = field(default_factory=list)
     decision: str = ""
     focus_point: str = ""
@@ -38,7 +38,7 @@ class InterviewSession:
         self,
         question: str,
         is_follow_up: bool = False,
-        intent: str = "",
+        question_types: str = "",
         turn_number: int = 0,
     ) -> None:
         """새 질문을 기록한다."""
@@ -46,7 +46,7 @@ class InterviewSession:
             question=question,
             turn_number=turn_number,
             is_follow_up=is_follow_up,
-            intent=intent,
+            question_types=question_types,
         ))
 
     def add_answer(self, answer: str) -> None:
@@ -100,7 +100,7 @@ class InterviewSession:
         if not self.history:
             return "(아직 질문한 내용 없음)"
         return "\n".join(
-            f"- 질문: {turn.question} (의도: {turn.intent})"
+            f"- 질문: {turn.question} (유형: {turn.question_types})"
             for turn in self.history
         )
 

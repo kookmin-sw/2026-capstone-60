@@ -37,7 +37,7 @@ async def save_qna(
     session_id: str,
     turn_number: int,
     question: str,
-    intent: str,
+    question_types: str,
     is_follow_up: bool,
     answer: str,
     answer_summary: Optional[list[str]] = None,
@@ -58,7 +58,7 @@ async def save_qna(
     payload = {
         "turnNumber": turn_number,
         "question": question,
-        "intent": intent,
+        "intent": question_types,
         "isFollowUp": is_follow_up,
         "answer": answer,
         "answerSummary": answer_summary,

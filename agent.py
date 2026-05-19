@@ -222,7 +222,7 @@ class InterviewerAgent(Agent):
                 "payload": {
                     "turnNumber": len(self.interview.history),
                     "text": result["question"],
-                    "intent": result.get("intent", ""),
+                    "intent": result.get("question_types", ""),
                     "isFollowUp": is_follow_up,
                 },
             }
@@ -240,6 +240,22 @@ class InterviewerAgent(Agent):
         last_turn = self.interview.history[-1] if self.interview.history else None
         if not last_turn:
             return await self._llm_service.generate_next_topic(self.interview), False
+
+        # 완전 무응답 → 요약/판단 호출 자체를 건너뜀
+        if not last_turn.answer.strip():
+            return await self._llm_service.generate_next_topic(self.interview), False
+
+        # 꼬리질문 최대 3회 제한
+        consecutive_follow_ups = 0
+        for turn in reversed(self.interview.history):
+            if turn.is_follow_up:
+                consecutive_follow_ups += 1
+            else:
+                break
+
+        if consecutive_follow_ups >= 3:
+            return await self._llm_service.generate_next_topic(self.interview), False
+
 
         judgment = await self._analyze_last_turn()
         if judgment is None:
@@ -312,7 +328,7 @@ class InterviewerAgent(Agent):
                 session_id=self.interview.session_id,
                 turn_number=prev_turn_number,
                 question=prev_turn.question,
-                intent=prev_turn.intent,
+                question_types=prev_turn.question_types,
                 is_follow_up=prev_turn.is_follow_up,
                 answer=prev_turn.answer,
                 answer_summary=prev_turn.answer_summary,
@@ -351,7 +367,7 @@ class InterviewerAgent(Agent):
                 session_id=self.interview.session_id,
                 turn_number=last_turn_number,
                 question=last_turn.question,
-                intent=last_turn.intent,
+                question_types=last_turn.question_types,
                 is_follow_up=last_turn.is_follow_up,
                 answer=last_turn.answer,
                 answer_summary=last_turn.answer_summary,

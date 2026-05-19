@@ -88,7 +88,7 @@ class LLMService:
             messages=[{"role": "user", "content": [{"text": prompt}]}],
         )
 
-        session.add_question(result["question"], is_follow_up=False, intent=result["intent"])
+        session.add_question(result["question"], is_follow_up=False, question_types=result["question_types"])
         return result
 
     async def analyze_last_answer(self, session: InterviewSession) -> AnswerJudgment:
@@ -105,7 +105,7 @@ class LLMService:
 
         prompt = ANSWER_JUDGE_PROMPT.format(
             question=turn.question,
-            question_types=turn.intent or "미분류",
+            question_types=turn.question_types or "미분류",
             extracted_claims=_format_extracted_claims(extracted_claims),
         )
         raw = await self._converse_text(
@@ -143,7 +143,7 @@ class LLMService:
             messages=messages,
         )
 
-        session.add_question(result["question"], is_follow_up=True, intent=result["intent"])
+        session.add_question(result["question"], is_follow_up=True, question_types=result["question_types"])
         return result
 
     async def generate_next_topic(
@@ -169,7 +169,7 @@ class LLMService:
             messages=messages,
         )
 
-        session.add_question(result["question"], is_follow_up=False, intent=result["intent"])
+        session.add_question(result["question"], is_follow_up=False, question_types=result["question_types"])
         return result
 
     # ── Private helpers ─────────────────────────────────────
@@ -244,12 +244,19 @@ def _parse_question_json(raw: str) -> dict[str, str]:
     """LLM 응답 JSON 을 파싱. 실패하면 원문을 question 으로 담는다."""
     try:
         obj = json.loads(raw)
+        question_types = obj.get("question_types", [])
+        if isinstance(question_types, list):
+            qt = ", ".join(question_types)
+        else:
+            qt = str(question_types).strip()
+
         return {
             "question": obj.get("question", "").strip() or raw.strip(),
-            "intent": obj.get("intent", "").strip(),
+            "question_types": qt,
         }
+
     except (json.JSONDecodeError, AttributeError):
-        return {"question": raw.strip(), "intent": ""}
+        return {"question": raw.strip(), "question_types": ""}
 
 
 def _format_extracted_claims(extracted_claims: list[str]) -> str:
@@ -327,9 +334,9 @@ class MockLLMService:
         await asyncio.sleep(0.3)
         result = {
             "question": self._FIRST_QUESTIONS[0],
-            "intent": "지원자의 주도적 문제 해결 경험 파악 (mock)",
+            "question_types": "문제해결력 (mock)",
         }
-        session.add_question(result["question"], is_follow_up=False, intent=result["intent"])
+        session.add_question(result["question"], is_follow_up=False, question_types=result["question_types"])
         return result
 
     async def generate_follow_up(
@@ -340,9 +347,9 @@ class MockLLMService:
         self._follow_idx += 1
         result = {
             "question": q,
-            "intent": f"답변 심화 (mock) - {focus_point[:40]}",
+            "question_types": f"기술역량 (mock)",
         }
-        session.add_question(result["question"], is_follow_up=True, intent=result["intent"])
+        session.add_question(result["question"], is_follow_up=True, question_types=result["question_types"])
         return result
 
     async def analyze_last_answer(self, session: InterviewSession) -> AnswerJudgment:
@@ -382,8 +389,8 @@ class MockLLMService:
             session.add_answer(user_answer)
         q = self._NEXT_QUESTIONS[self._next_idx % len(self._NEXT_QUESTIONS)]
         self._next_idx += 1
-        result = {"question": q, "intent": "새 주제 탐색 (mock)"}
-        session.add_question(result["question"], is_follow_up=False, intent=result["intent"])
+        result = {"question": q, "question_types": "기술역량 (mock)"}
+        session.add_question(result["question"], is_follow_up=False, question_types=result["question_types"])
         return result
 
 
