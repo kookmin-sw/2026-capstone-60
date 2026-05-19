@@ -55,6 +55,8 @@ load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("livekit-agent")
 GROUP_START_FALLBACK_SECONDS = float(os.getenv("GROUP_START_FALLBACK_SECONDS", "10"))
+GROUP_PARTICIPANT_WAIT_SECONDS = float(os.getenv("GROUP_PARTICIPANT_WAIT_SECONDS", "20"))
+STT_DRAIN_DELAY_SECONDS = float(os.getenv("STT_DRAIN_DELAY_SECONDS", "0.4"))
 
 
 # ─────────────────────────────────────────────────────────
@@ -421,6 +423,7 @@ class GroupInterviewerAgent(Agent):
         self._llm_service = llm_service
         self._speaking = False
         self._started = False
+        self._transitioning_turn = False
         self._start_lock = asyncio.Lock()
         self._fallback_task: asyncio.Task | None = None
         self.group = GroupInterviewSession(
@@ -476,7 +479,7 @@ class GroupInterviewerAgent(Agent):
 
         @self.session.on("user_input_transcribed")
         def _on_user_transcribed(ev):
-            if self._speaking or not self._started:
+            if self._speaking or not self._started or self._transitioning_turn:
                 return
             transcript = getattr(ev, "transcript", "")
             if getattr(ev, "is_final", True) and transcript:
@@ -542,6 +545,7 @@ class GroupInterviewerAgent(Agent):
             if not self.group.participants:
                 logger.error("[GROUP 시작 실패] participants 없음")
                 return
+            await self._wait_for_group_participants()
 
             self.group.start_new_round()
             self.group.current_turn_number = 1
@@ -585,6 +589,7 @@ class GroupInterviewerAgent(Agent):
             await self._say(
                 "죄송합니다, 잠시 문제가 생겼습니다. 다음 질문으로 넘어가겠습니다."
             )
+            self._transitioning_turn = False
             return
 
         if interview.history:
@@ -599,6 +604,30 @@ class GroupInterviewerAgent(Agent):
         )
         await self._say(result["question"])
         await self._publish_question(result, participant, turn_number, is_follow_up)
+        self._transitioning_turn = False
+
+    async def _wait_for_group_participants(self) -> None:
+        """metadata의 그룹 참가자가 LiveKit room에 들어올 때까지 기다린다."""
+        room = self.session.room_io.room
+        required = {participant.identity for participant in self.group.participants}
+        deadline = asyncio.get_running_loop().time() + GROUP_PARTICIPANT_WAIT_SECONDS
+
+        while True:
+            joined = set(room.remote_participants.keys())
+            missing = required - joined
+            if not missing:
+                logger.info("[GROUP 참가자 입장 확인] participants=%s", sorted(joined))
+                return
+
+            if asyncio.get_running_loop().time() >= deadline:
+                logger.warning(
+                    "[GROUP 참가자 입장 대기 timeout] missing=%s joined=%s",
+                    sorted(missing),
+                    sorted(joined),
+                )
+                return
+
+            await asyncio.sleep(0.2)
 
     async def _publish_question(
         self,
@@ -641,6 +670,8 @@ class GroupInterviewerAgent(Agent):
             logger.warning("[GROUP NEXT 중복 무시] turnNumber=%d", turn_number)
             return
         self.group.last_processed_next_turn_number = turn_number
+        await asyncio.sleep(STT_DRAIN_DELAY_SECONDS)
+        self._transitioning_turn = True
 
         participant = self.group.current_participant()
         interview = participant.interview
@@ -685,6 +716,8 @@ class GroupInterviewerAgent(Agent):
         logger.info("[GROUP END 수신] reason=%s", reason)
 
         if self._started and self.group.participants:
+            await asyncio.sleep(STT_DRAIN_DELAY_SECONDS)
+            self._transitioning_turn = True
             participant = self.group.current_participant()
             interview = participant.interview
             answer = interview.flush_buffer()
