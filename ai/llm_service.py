@@ -143,7 +143,14 @@ class LLMService:
             messages=messages,
         )
 
-        session.add_question(result["question"], is_follow_up=True, question_types=result["question_types"])
+        # 최종 부모 찾기: 마지막 턴이 꼬리질문이면 그 부모를 따라감, 원 질문이면 그 턴 번호가 부모
+        last_turn = session.history[-1]
+        if last_turn.is_follow_up:
+            parent = last_turn.parent_turn_number
+        else:
+            parent = last_turn.turn_number
+
+        session.add_question(result["question"], is_follow_up=True, question_types=result["question_types"], parent_turn_number=parent)
         return result
 
     async def generate_next_topic(
@@ -349,7 +356,13 @@ class MockLLMService:
             "question": q,
             "question_types": f"기술역량 (mock)",
         }
-        session.add_question(result["question"], is_follow_up=True, question_types=result["question_types"])
+        # 최종 부모 찾기
+        last_turn = session.history[-1]
+        if last_turn.is_follow_up:
+            parent = last_turn.parent_turn_number
+        else:
+            parent = last_turn.turn_number
+        session.add_question(result["question"], is_follow_up=True, question_types=result["question_types"], parent_turn_number=parent)
         return result
 
     async def analyze_last_answer(self, session: InterviewSession) -> AnswerJudgment:

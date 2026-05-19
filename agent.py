@@ -217,6 +217,7 @@ class InterviewerAgent(Agent):
         publish 실패는 치명적이지 않으므로 try/except로 감싸고 로그만 남긴다.
         """
         try:
+            last_turn = self.interview.history[-1] if self.interview.history else None
             payload = {
                 "type": "QUESTION",
                 "payload": {
@@ -224,6 +225,7 @@ class InterviewerAgent(Agent):
                     "text": result["question"],
                     "intent": result.get("question_types", ""),
                     "isFollowUp": is_follow_up,
+                    "parentTurnNumber": last_turn.parent_turn_number if last_turn else 0,
                 },
             }
             await self.session.room_io.room.local_participant.publish_data(
@@ -245,16 +247,15 @@ class InterviewerAgent(Agent):
         if not last_turn.answer.strip():
             return await self._llm_service.generate_next_topic(self.interview), False
 
-        # 꼬리질문 최대 3회 제한
-        consecutive_follow_ups = 0
-        for turn in reversed(self.interview.history):
-            if turn.is_follow_up:
-                consecutive_follow_ups += 1
-            else:
-                break
-
-        if consecutive_follow_ups >= 3:
-            return await self._llm_service.generate_next_topic(self.interview), False
+        # 꼬리질문 최대 3회 제한 (같은 부모 질문에서 파생된 꼬리질문이 3개 이상이면 새 주제로)
+        if last_turn.is_follow_up:
+            parent = last_turn.parent_turn_number
+            sibling_count = sum(
+                1 for turn in self.interview.history
+                if turn.is_follow_up and turn.parent_turn_number == parent
+            )
+            if sibling_count >= 3:
+                return await self._llm_service.generate_next_topic(self.interview), False
 
 
         judgment = await self._analyze_last_turn()
@@ -305,6 +306,17 @@ class InterviewerAgent(Agent):
 
         # ① STT 버퍼 flush → 직전 턴 답변 기록
         answer = self.interview.flush_buffer()
+
+        # 질문 반복 요청 감지 → 현재 질문을 다시 발화하고 턴 진행하지 않음
+        repeat_keywords = ("다시", "한번 더", "못 들었", "다시 한번", "뭐라고", "한 번 더",
+                           "듣고싶", "듣고 싶", "다시 들", "한번만 더", "다시요", "뭐라고요")
+        if answer.strip() and any(kw in answer for kw in repeat_keywords) and len(answer.strip()) < 30:
+            last_question = self.interview.history[-1].question if self.interview.history else None
+            if last_question:
+                logger.info("[질문 반복 요청] answer=%s", answer.strip())
+                await self._say(last_question)
+                return
+
         self.interview.add_answer(answer)
         logger.info("[답변 확정] turn=%d answer_len=%d", turn_number - 1, len(answer))
 
