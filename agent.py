@@ -245,7 +245,7 @@ class InterviewerAgent(Agent):
         if not last_turn.answer.strip():
             return await self._llm_service.generate_next_topic(self.interview), False
 
-        # 꼬리질문 최대 3회 제한
+        # 꼬리질문 최대 3회 제한 (현재 턴 포함하여 연속 꼬리질문이 3개 이상이면 새 주제로)
         consecutive_follow_ups = 0
         for turn in reversed(self.interview.history):
             if turn.is_follow_up:
@@ -305,6 +305,16 @@ class InterviewerAgent(Agent):
 
         # ① STT 버퍼 flush → 직전 턴 답변 기록
         answer = self.interview.flush_buffer()
+
+        # 질문 반복 요청 감지 → 현재 질문을 다시 발화하고 턴 진행하지 않음
+        repeat_keywords = ("다시", "한번 더", "못 들었", "다시 한번", "뭐라고", "한 번 더")
+        if answer.strip() and any(kw in answer for kw in repeat_keywords) and len(answer.strip()) < 30:
+            last_question = self.interview.history[-1].question if self.interview.history else None
+            if last_question:
+                logger.info("[질문 반복 요청] answer=%s", answer.strip())
+                await self._say(last_question)
+                return
+
         self.interview.add_answer(answer)
         logger.info("[답변 확정] turn=%d answer_len=%d", turn_number - 1, len(answer))
 
