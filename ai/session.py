@@ -6,6 +6,7 @@ Agent 프로세스 하나 = 면접 세션 하나이므로 전역 dict 저장소�
 InterviewerAgent 가 InterviewSession 인스턴스 하나를 직접 보유한다.
 """
 
+import random
 from dataclasses import dataclass, field
 
 
@@ -13,6 +14,7 @@ from dataclasses import dataclass, field
 class ConversationTurn:
     """대화 한 턴 (질문 + 답변)."""
     question: str
+    turn_number: int = 0
     answer: str = ""
     is_follow_up: bool = False
     intent: str = ""
@@ -32,10 +34,17 @@ class InterviewSession:
     history: list[ConversationTurn] = field(default_factory=list)
     current_answer_buffer: str = ""
 
-    def add_question(self, question: str, is_follow_up: bool = False, intent: str = "") -> None:
+    def add_question(
+        self,
+        question: str,
+        is_follow_up: bool = False,
+        intent: str = "",
+        turn_number: int = 0,
+    ) -> None:
         """새 질문을 기록한다."""
         self.history.append(ConversationTurn(
             question=question,
+            turn_number=turn_number,
             is_follow_up=is_follow_up,
             intent=intent,
         ))
@@ -94,3 +103,47 @@ class InterviewSession:
             f"- 질문: {turn.question} (의도: {turn.intent})"
             for turn in self.history
         )
+
+
+@dataclass
+class ParticipantInterviewSession:
+    """그룹 면접 참가자별 상태."""
+    member_id: int
+    identity: str
+    name: str
+    interview: InterviewSession
+
+
+@dataclass
+class GroupInterviewSession:
+    """그룹 면접 세션 상태."""
+    session_id: str
+    job_role: str
+    participants: list[ParticipantInterviewSession]
+    round_number: int = 0
+    round_order: list[int] = field(default_factory=list)
+    round_position: int = 0
+    current_turn_number: int = 1
+    last_processed_next_turn_number: int = 0
+    follow_up_active: bool = False
+
+    def current_participant(self) -> ParticipantInterviewSession:
+        if not self.round_order:
+            self.start_new_round()
+        return self.participants[self.round_order[self.round_position]]
+
+    def start_new_round(self) -> None:
+        self.round_number += 1
+        self.round_order = list(range(len(self.participants)))
+        random.shuffle(self.round_order)
+        self.round_position = 0
+
+    def advance_speaker(self) -> ParticipantInterviewSession:
+        if not self.round_order:
+            self.start_new_round()
+            return self.current_participant()
+
+        self.round_position += 1
+        if self.round_position >= len(self.round_order):
+            self.start_new_round()
+        return self.current_participant()

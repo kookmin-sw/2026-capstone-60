@@ -44,12 +44,19 @@ from livekit.plugins import silero
 
 from ai.llm_service import LLMService, MockLLMService, create_llm_service
 from ai.qna_client import save_qna
-from ai.session import InterviewSession
+from ai.session import (
+    GroupInterviewSession,
+    InterviewSession,
+    ParticipantInterviewSession,
+)
 
 load_dotenv()
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("livekit-agent")
+GROUP_START_FALLBACK_SECONDS = float(os.getenv("GROUP_START_FALLBACK_SECONDS", "10"))
+GROUP_PARTICIPANT_WAIT_SECONDS = float(os.getenv("GROUP_PARTICIPANT_WAIT_SECONDS", "20"))
+STT_DRAIN_DELAY_SECONDS = float(os.getenv("STT_DRAIN_DELAY_SECONDS", "0.4"))
 
 
 # ─────────────────────────────────────────────────────────
@@ -394,6 +401,386 @@ class InterviewerAgent(Agent):
         yield result["question"]
 
 
+class GroupInterviewerAgent(Agent):
+    """
+    그룹 면접 Agent.
+
+    - Backend START 수신 전까지 질문하지 않는다.
+    - 라운드마다 참가자 순서를 셔플하고, 한 라운드에 모두 한 번씩 기본 질문을 받는다.
+    - 꼬리질문은 같은 참가자에게 최대 1회만 허용한다.
+    """
+
+    def __init__(
+        self,
+        session_id: str,
+        job_role: str,
+        participants: list[dict[str, Any]],
+        fallback_resume_text: str,
+        cover_letter_text: str,
+        llm_service: "LLMService | MockLLMService",
+    ):
+        super().__init__(instructions="")
+        self._llm_service = llm_service
+        self._speaking = False
+        self._started = False
+        self._transitioning_turn = False
+        self._start_lock = asyncio.Lock()
+        self._fallback_task: asyncio.Task | None = None
+        self.group = GroupInterviewSession(
+            session_id=session_id,
+            job_role=job_role,
+            participants=[
+                ParticipantInterviewSession(
+                    member_id=int(participant["memberId"]),
+                    identity=participant["identity"],
+                    name=participant.get("name", participant["identity"]),
+                    interview=InterviewSession(
+                        session_id=session_id,
+                        job_role=job_role,
+                        resume_text=participant.get("resumeText") or fallback_resume_text,
+                        cover_letter_text=cover_letter_text,
+                        system_prompt=llm_service.build_system_prompt(
+                            job_role,
+                            participant.get("resumeText") or fallback_resume_text,
+                        ),
+                    ),
+                )
+                for participant in participants
+            ],
+        )
+
+    async def _say(self, text: str) -> None:
+        self._speaking = True
+        try:
+            try:
+                await self.session.say(text, allow_interruptions=False)
+                return
+            except TypeError:
+                pass
+
+            try:
+                await self.session.say(text, allow_barge_in=False)
+                return
+            except TypeError:
+                pass
+
+            try:
+                await self.session.say(text, interruptible=False)
+                return
+            except TypeError:
+                pass
+
+            await self.session.say(text)
+        finally:
+            self._speaking = False
+
+    async def on_enter(self) -> None:
+        """GROUP: STT/Data 핸들러 등록 후 START 또는 fallback 시작을 기다린다."""
+
+        @self.session.on("user_input_transcribed")
+        def _on_user_transcribed(ev):
+            if self._speaking or not self._started or self._transitioning_turn:
+                return
+            transcript = getattr(ev, "transcript", "")
+            if getattr(ev, "is_final", True) and transcript:
+                participant = self.group.current_participant()
+                participant.interview.append_to_buffer(transcript)
+                logger.info(
+                    "[GROUP STT 확정] target=%s text=%s",
+                    participant.identity,
+                    transcript,
+                )
+            else:
+                logger.debug("[GROUP STT 중간] %s", transcript)
+
+        room = self.session.room_io.room
+
+        @room.on("data_received")
+        def _on_data_received(packet, *args, **kwargs):
+            try:
+                data = packet.data if hasattr(packet, "data") else packet
+                msg = json.loads(
+                    data.decode("utf-8") if isinstance(data, bytes) else str(data)
+                )
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                logger.warning("GROUP Data Message 파싱 실패: %s", e)
+                return
+
+            msg_type = msg.get("type", "")
+            payload = msg.get("payload", {})
+
+            if msg_type == "START":
+                asyncio.ensure_future(self._handle_start(payload))
+            elif msg_type == "NEXT":
+                asyncio.ensure_future(self._handle_next(payload))
+            elif msg_type == "END":
+                asyncio.ensure_future(self._handle_end(payload))
+            else:
+                logger.debug("GROUP 알 수 없는 Data Message type: %s", msg_type)
+
+        self._fallback_task = asyncio.create_task(self._start_after_fallback_delay())
+
+    async def _start_after_fallback_delay(self) -> None:
+        await asyncio.sleep(GROUP_START_FALLBACK_SECONDS)
+        if self._started:
+            return
+        logger.warning(
+            "[GROUP START fallback] START 미수신 — metadata participants 기준으로 시작"
+        )
+        await self._start_interview(source="fallback")
+
+    async def _handle_start(self, payload: dict) -> None:
+        if self._started:
+            logger.info("[GROUP START 무시] 이미 시작됨")
+            return
+
+        target_identity = payload.get("targetIdentity")
+        logger.info("[GROUP START 수신] targetIdentity=%s", target_identity)
+        await self._start_interview(source="start")
+
+    async def _start_interview(self, source: str) -> None:
+        async with self._start_lock:
+            if self._started:
+                return
+            if not self.group.participants:
+                logger.error("[GROUP 시작 실패] participants 없음")
+                return
+            await self._wait_for_group_participants()
+
+            self.group.start_new_round()
+            self.group.current_turn_number = 1
+            self.group.follow_up_active = False
+            self._started = True
+            logger.info(
+                "[GROUP 시작] source=%s round=%d order=%s",
+                source,
+                self.group.round_number,
+                [
+                    self.group.participants[index].identity
+                    for index in self.group.round_order
+                ],
+            )
+            await self._ask_current_participant(
+                turn_number=self.group.current_turn_number,
+                is_follow_up=False,
+            )
+
+    async def _ask_current_participant(
+        self,
+        turn_number: int,
+        is_follow_up: bool,
+        focus_point: str = "",
+    ) -> None:
+        participant = self.group.current_participant()
+        interview = participant.interview
+
+        try:
+            if is_follow_up:
+                result = await self._llm_service.generate_follow_up(
+                    interview,
+                    focus_point,
+                )
+            elif interview.history:
+                result = await self._llm_service.generate_next_topic(interview)
+            else:
+                result = await self._llm_service.generate_first_question(interview)
+        except Exception as e:
+            logger.exception("GROUP 질문 생성 실패: %s", e)
+            await self._say(
+                "죄송합니다, 잠시 문제가 생겼습니다. 다음 질문으로 넘어가겠습니다."
+            )
+            self._transitioning_turn = False
+            return
+
+        if interview.history:
+            interview.history[-1].turn_number = turn_number
+
+        logger.info(
+            "[GROUP 질문] turn=%d target=%s follow_up=%s question=%s",
+            turn_number,
+            participant.identity,
+            is_follow_up,
+            result["question"],
+        )
+        await self._say(result["question"])
+        await self._publish_question(result, participant, turn_number, is_follow_up)
+        self._transitioning_turn = False
+
+    async def _wait_for_group_participants(self) -> None:
+        """metadata의 그룹 참가자가 LiveKit room에 들어올 때까지 기다린다."""
+        room = self.session.room_io.room
+        required = {participant.identity for participant in self.group.participants}
+        deadline = asyncio.get_running_loop().time() + GROUP_PARTICIPANT_WAIT_SECONDS
+
+        while True:
+            joined = set(room.remote_participants.keys())
+            missing = required - joined
+            if not missing:
+                logger.info("[GROUP 참가자 입장 확인] participants=%s", sorted(joined))
+                return
+
+            if asyncio.get_running_loop().time() >= deadline:
+                logger.warning(
+                    "[GROUP 참가자 입장 대기 timeout] missing=%s joined=%s",
+                    sorted(missing),
+                    sorted(joined),
+                )
+                return
+
+            await asyncio.sleep(0.2)
+
+    async def _publish_question(
+        self,
+        result: dict,
+        participant: ParticipantInterviewSession,
+        turn_number: int,
+        is_follow_up: bool,
+    ) -> None:
+        try:
+            payload = {
+                "type": "QUESTION",
+                "payload": {
+                    "turnNumber": turn_number,
+                    "text": result["question"],
+                    "intent": result.get("intent", ""),
+                    "isFollowUp": is_follow_up,
+                    "targetIdentity": participant.identity,
+                },
+            }
+            await self.session.room_io.room.local_participant.publish_data(
+                payload=json.dumps(payload).encode("utf-8"),
+                reliable=True,
+                topic="interview",
+            )
+            logger.info(
+                "[GROUP QUESTION publish] turn=%d target=%s",
+                turn_number,
+                participant.identity,
+            )
+        except Exception as e:
+            logger.warning("[GROUP QUESTION publish 실패] %s — 면접 계속", e)
+
+    async def _handle_next(self, payload: dict) -> None:
+        if not self._started:
+            logger.warning("[GROUP NEXT 무시] 아직 START 전")
+            return
+
+        turn_number = int(payload.get("turnNumber") or self.group.current_turn_number + 1)
+        if turn_number <= self.group.last_processed_next_turn_number:
+            logger.warning("[GROUP NEXT 중복 무시] turnNumber=%d", turn_number)
+            return
+        self.group.last_processed_next_turn_number = turn_number
+        await asyncio.sleep(STT_DRAIN_DELAY_SECONDS)
+        self._transitioning_turn = True
+
+        participant = self.group.current_participant()
+        interview = participant.interview
+        answer = interview.flush_buffer()
+        interview.add_answer(answer)
+        logger.info(
+            "[GROUP 답변 확정] respondent=%s turn=%d answer_len=%d",
+            participant.identity,
+            self.group.current_turn_number,
+            len(answer),
+        )
+
+        last_turn = interview.history[-1] if interview.history else None
+        judgment = None
+        if last_turn:
+            judgment = await self._analyze_participant_turn(participant)
+            asyncio.create_task(self._save_participant_qna(participant, last_turn))
+
+        should_follow_up = (
+            not self.group.follow_up_active
+            and judgment is not None
+            and judgment.decision == "FOLLOW_UP"
+        )
+
+        self.group.current_turn_number = turn_number
+        if should_follow_up:
+            self.group.follow_up_active = True
+            await self._ask_current_participant(
+                turn_number=turn_number,
+                is_follow_up=True,
+                focus_point=judgment.focus_point,
+            )
+            return
+
+        if self.group.follow_up_active:
+            self.group.follow_up_active = False
+        self.group.advance_speaker()
+        await self._ask_current_participant(turn_number=turn_number, is_follow_up=False)
+
+    async def _handle_end(self, payload: dict) -> None:
+        reason = payload.get("reason", "UNKNOWN")
+        logger.info("[GROUP END 수신] reason=%s", reason)
+
+        if self._started and self.group.participants:
+            await asyncio.sleep(STT_DRAIN_DELAY_SECONDS)
+            self._transitioning_turn = True
+            participant = self.group.current_participant()
+            interview = participant.interview
+            answer = interview.flush_buffer()
+            interview.add_answer(answer)
+            logger.info(
+                "[GROUP 마지막 답변 확정] respondent=%s answer_len=%d",
+                participant.identity,
+                len(answer),
+            )
+
+            last_turn = interview.history[-1] if interview.history else None
+            if last_turn:
+                await self._analyze_participant_turn(participant)
+                await self._save_participant_qna(participant, last_turn)
+
+        logger.info("[GROUP 면접 종료] session=%s", self.group.session_id)
+        try:
+            self.session.shutdown()
+        except RuntimeError:
+            pass
+
+    async def _analyze_participant_turn(self, participant: ParticipantInterviewSession):
+        try:
+            judgment = await self._llm_service.analyze_last_answer(participant.interview)
+            participant.interview.set_last_turn_analysis(
+                answer_summary=judgment.extracted_claims,
+                decision=judgment.decision,
+                focus_point=judgment.focus_point,
+            )
+            logger.info(
+                "[GROUP answer analysis] respondent=%s decision=%s focus_point=%s",
+                participant.identity,
+                judgment.decision,
+                judgment.focus_point,
+            )
+            return judgment
+        except Exception as e:
+            logger.warning(
+                "GROUP answer analysis failed respondent=%s: %s",
+                participant.identity,
+                e,
+            )
+            return None
+
+    async def _save_participant_qna(
+        self,
+        participant: ParticipantInterviewSession,
+        turn,
+    ) -> bool:
+        return await save_qna(
+            session_id=self.group.session_id,
+            turn_number=turn.turn_number or self.group.current_turn_number,
+            question=turn.question,
+            intent=turn.intent,
+            is_follow_up=turn.is_follow_up,
+            answer=turn.answer,
+            answer_summary=turn.answer_summary,
+            follow_up_decision=turn.decision,
+            focus_point=turn.focus_point,
+            respondent_member_id=participant.member_id,
+        )
+
+
 def _extract_last_user_text(chat_ctx: llm_types.ChatContext) -> str:
     """ChatContext 에서 가장 최근 user 메시지의 텍스트를 반환."""
     for item in reversed(chat_ctx.items):
@@ -434,21 +821,25 @@ async def entrypoint(ctx: JobContext) -> None:
     """Room 이 배정될 때마다 호출되는 진입점."""
     metadata = _load_metadata(ctx)
     session_id = metadata["sessionId"]
+    mode = metadata.get("mode", "SOLO").upper()
     job_role = metadata.get("jobRole", "BACKEND")
     resume_text = metadata.get("resumeText", "")
     cover_letter_text = metadata.get("coverLetterText", "")
+    participants = metadata.get("participants", [])
 
     ctx.log_context_fields = {
         "room": ctx.room.name,
         "session_id": session_id,
     }
     logger.info(
-        "[entrypoint] room=%s session=%s job_role=%s resume_len=%d cover_len=%d",
+        "[entrypoint] room=%s session=%s mode=%s job_role=%s resume_len=%d cover_len=%d participants=%d",
         ctx.room.name,
         session_id,
+        mode,
         job_role,
         len(resume_text),
         len(cover_letter_text),
+        len(participants) if isinstance(participants, list) else 0,
     )
 
     llm_service = create_llm_service()
@@ -469,13 +860,33 @@ async def entrypoint(ctx: JobContext) -> None:
         turn_handling=_create_turn_handling_options(),
     )
 
-    agent = InterviewerAgent(
-        session_id=session_id,
-        job_role=job_role,
-        resume_text=resume_text,
-        cover_letter_text=cover_letter_text,
-        llm_service=llm_service,
-    )
+    if mode == "GROUP":
+        if not isinstance(participants, list) or not participants:
+            logger.error("GROUP metadata participants 가 비어 있어 SOLO fallback 사용")
+            agent = InterviewerAgent(
+                session_id=session_id,
+                job_role=job_role,
+                resume_text=resume_text,
+                cover_letter_text=cover_letter_text,
+                llm_service=llm_service,
+            )
+        else:
+            agent = GroupInterviewerAgent(
+                session_id=session_id,
+                job_role=job_role,
+                participants=participants,
+                fallback_resume_text=resume_text,
+                cover_letter_text=cover_letter_text,
+                llm_service=llm_service,
+            )
+    else:
+        agent = InterviewerAgent(
+            session_id=session_id,
+            job_role=job_role,
+            resume_text=resume_text,
+            cover_letter_text=cover_letter_text,
+            llm_service=llm_service,
+        )
 
     # 사용자 참가 대기 (§9.3: Frontend가 Room 접속 전에 발화하면 첫 질문을 놓침)
     await ctx.wait_for_participant()
