@@ -43,6 +43,7 @@ async def save_qna(
     answer_summary: Optional[list[str]] = None,
     follow_up_decision: Optional[str] = None,
     focus_point: Optional[str] = None,
+    respondent_member_id: Optional[int] = None,
 ) -> bool:
     """
     단건 QnA를 Backend에 저장한다.
@@ -64,6 +65,8 @@ async def save_qna(
         "followUpDecision": follow_up_decision,
         "focusPoint": focus_point,
     }
+    if respondent_member_id is not None:
+        payload["respondentMemberId"] = respondent_member_id
     headers = {"Content-Type": "application/json"}
     if SERVICE_TOKEN:
         headers["X-Service-Token"] = SERVICE_TOKEN
