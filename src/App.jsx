@@ -166,14 +166,27 @@ export default function App() {
     try {
       setStartLoading(true);
       setError("");
-      const response = await createInterviewSession(payload);
+
+      const isGroupMode = payload.mode === "GROUP" || (payload.maxParticipants ?? 1) > 1;
+      const apiBody = {
+        jobField: payload.jobField,
+        durationMinutes: payload.durationMinutes,
+      };
+      if (payload.resumeIds) {
+        apiBody.resumeIds = payload.resumeIds;
+      }
+      if (isGroupMode) {
+        apiBody.maxParticipants = payload.maxParticipants ?? 2;
+      }
+
+      const response = await createInterviewSession(apiBody);
       const data = response.data;
       const sessionState = buildSessionState(data, payload, {
         role: "HOST",
         myIdentity: user?.id ? `user-${user.id}` : undefined,
       });
       setSession(sessionState);
-      if (sessionState.mode === "GROUP" || sessionState.maxParticipants > 1) {
+      if (isGroupMode) {
         navigate(ROUTE.LOBBY);
       } else {
         navigate(ROUTE.ROOM);
@@ -250,25 +263,6 @@ export default function App() {
     }
   };
 
-  const endSession = useCallback(
-    async (reason) => {
-      if (!session?.sessionId || ending) return;
-      try {
-        setEnding(true);
-        setError("");
-        await endInterviewSession(session.sessionId, reason);
-        // 세션 종료 트랜잭션 커밋 후 평가 트리거 (별도 요청)
-        await triggerEvaluation(session.sessionId);
-        navigate(ROUTE.EVALUATING);
-      } catch (endError) {
-        setError(endError.message);
-      } finally {
-        setEnding(false);
-      }
-    },
-    [ending, session?.sessionId]
-  );
-
   const leaveSession = useCallback(
     async () => {
       if (!session?.sessionId || ending) return;
@@ -285,6 +279,32 @@ export default function App() {
       }
     },
     [ending, navigate, session?.sessionId]
+  );
+
+  const endSession = useCallback(
+    async (reason) => {
+      if (!session?.sessionId || ending) return;
+      const isGroup = session.mode === "GROUP";
+      const isHost = session.role === "HOST";
+
+      if (isGroup && !isHost) {
+        await leaveSession();
+        return;
+      }
+
+      try {
+        setEnding(true);
+        setError("");
+        await endInterviewSession(session.sessionId, reason);
+        await triggerEvaluation(session.sessionId);
+        navigate(ROUTE.EVALUATING);
+      } catch (endError) {
+        setError(endError.message);
+      } finally {
+        setEnding(false);
+      }
+    },
+    [ending, session?.sessionId, session?.mode, session?.role, leaveSession]
   );
 
   useEffect(() => {
@@ -335,10 +355,8 @@ export default function App() {
     try {
       setHistoryLoading(true);
       setError("");
-      const response = await fetchInterviewRecords();
-      // 백엔드가 배열을 직접 반환하므로 response 자체가 배열
-      const records = Array.isArray(response) ? response : (response?.data || []);
-      setHistoryRecords(records);
+      const records = await fetchInterviewRecords();
+      setHistoryRecords(Array.isArray(records) ? records : []);
       navigate(ROUTE.HISTORY);
     } catch (historyError) {
       setError(historyError.message);
@@ -353,9 +371,8 @@ export default function App() {
       (async () => {
         try {
           setHistoryLoading(true);
-          const response = await fetchInterviewRecords();
-          const records = Array.isArray(response) ? response : (response?.data || []);
-          setHistoryRecords(records);
+          const records = await fetchInterviewRecords();
+          setHistoryRecords(Array.isArray(records) ? records : []);
         } catch {
           // 조용히 실패
         } finally {

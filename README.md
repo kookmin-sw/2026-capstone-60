@@ -128,17 +128,34 @@ src/
 
 ---
 
-## 그룹 면접 초대 링크
+## 면접 시작 위저드 (4단계)
 
-호스트가 `maxParticipants >= 2`로 세션을 만들면 대기실에서 아래 형식의 **초대 URL**을 복사해 공유합니다.
+| 단계 | 내용 |
+|:----:|------|
+| 1 | **일반(SOLO)** vs **그룹(GROUP)** 선택 (그룹 시 2~4명) |
+| 2 | **이력서** + **지원 직무** |
+| 3 | **면접 시간** |
+| 4 | **마이크 테스트** → 시작 |
+
+- **SOLO**: `POST /v1/interviews/sessions` (maxParticipants 생략) → 즉시 면접실
+- **GROUP 호스트**: 동일 API + `maxParticipants: 2~4` + `resumeIds` → 로비 → 초대 링크 공유 → `PATCH ready` (join API 호출 안 함)
+- **GROUP 게스트**: 초대 링크 → 로그인 → 본인 이력서 선택 → `POST .../join` `{ resumeId }` → 로비
+
+## 그룹 면접 초대 링크
 
 ```
 https://capstonefront.vercel.app/interview/join/{sessionId}
 ```
 
-게스트 동작: 링크 접속 → (비로그인 시) 로그인/회원가입 → **`POST /v1/interviews/sessions/{sessionId}/join`** 호출 → 로비(`/interview/lobby`) 이동 → 준비 완료(`PATCH .../participants/me/ready`).
+게스트: 링크 접속 → 로그인 → **본인 이력서 필수 선택** → join API → 로비.
 
-프로덕션 HTTPS에서는 `vercel.json`이 `/v1/*` 요청을 백엔드(`http://23.22.137.145:8080`)로 프록시해 Mixed Content를 피합니다. SPA 직접 URL 접근은 `index.html`로 fallback됩니다.
+프로덕션 HTTPS: `vercel.json`이 `/v1/*`를 백엔드(`http://23.22.137.145:8080`)로 프록시 (Mixed Content 방지). SPA 경로는 `index.html` fallback.
+
+## 피드백 · 기록
+
+- 호스트 면접 종료: `POST .../end` → `POST .../{sessionId}/evaluate`
+- 조회: `GET /v1/interviews/feedbackList`, `GET /v1/interviews/feedback/{sessionId}`
+- `success: false` 응답 시 "피드백 생성 중" UI (폴링 재시도)
 
 ---
 

@@ -23,12 +23,27 @@ export async function saveInterviewRecord(recordInput) {
   return { success: true };
 }
 
+/** feedbackList 응답을 목록 UI 형식으로 정규화 */
+export function normalizeFeedbackListItem(item) {
+  if (!item) return null;
+  return {
+    sessionId: item.sessionId ?? item.id,
+    category: item.category ?? item.jobField ?? "직무 미지정",
+    overallScore: item.overallScore ?? item.score ?? null,
+    totalFeedback: item.totalFeedback ?? "",
+    createdAt: item.createdAt ?? item.interviewDate ?? null,
+    success: item.success,
+  };
+}
+
 //피드백 목록 조회
 export async function fetchInterviewRecords() {
   if (USE_MOCK_HISTORY) {
     return fetchMockInterviewRecords();
   }
-  return request("/feedbackList", { method: "GET" });
+  const payload = await request("/feedbackList", { method: "GET" });
+  const raw = Array.isArray(payload) ? payload : payload?.data ?? [];
+  return raw.map(normalizeFeedbackListItem).filter(Boolean);
 }
 
 //피드백 상세 조회

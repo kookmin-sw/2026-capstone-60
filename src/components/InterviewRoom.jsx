@@ -320,12 +320,19 @@ export default function InterviewRoom({ session, onSessionEnd, onSessionLeave, e
     }
   };
 
+  const isHost = session.role === "HOST";
+
   useEffect(() => {
     if (!canAskNextQuestion && answerTimer.secondsLeft === 0 && !ending) {
+      if (isGroup && !isHost) {
+        onSessionLeave?.();
+        roomRef.current?.disconnect();
+        return;
+      }
       onSessionEnd("TIME_OVER");
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canAskNextQuestion, answerTimer.secondsLeft, ending]);
+  }, [canAskNextQuestion, answerTimer.secondsLeft, ending, isGroup, isHost]);
 
   const toggleMic = async () => {
     if (session.livekit?.isMock) { setIsMicOn((prev) => !prev); return; }
