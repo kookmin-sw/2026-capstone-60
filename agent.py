@@ -210,32 +210,45 @@ class InterviewerAgent(Agent):
         # 첫 질문도 QUESTION publish (§5.4: TTS 재생 완료 후)
         await self._publish_question(result, is_follow_up=False)
 
+    # 꼬리질문 부모-자식 버그 수정
     async def _publish_question(self, result: dict, is_follow_up: bool) -> None:
-        """QUESTION Data Message를 Room에 publish한다 (§5.4).
+            """QUESTION Data Message를 Room에 publish한다 (§5.4)."""
+            try:
+                history = self.interview.history
 
-        TTS say()가 재생 완료까지 await하므로, 이 메서드는 say() 이후에 호출된다.
-        publish 실패는 치명적이지 않으므로 try/except로 감싸고 로그만 남긴다.
-        """
-        try:
-            last_turn = self.interview.history[-1] if self.interview.history else None
-            payload = {
-                "type": "QUESTION",
-                "payload": {
-                    "turnNumber": len(self.interview.history),
-                    "text": result["question"],
-                    "intent": result.get("question_types", ""),
-                    "isFollowUp": is_follow_up,
-                    "parentTurnNumber": last_turn.parent_turn_number if last_turn else 0,
-                },
-            }
-            await self.session.room_io.room.local_participant.publish_data(
-                payload=json.dumps(payload).encode("utf-8"),
-                reliable=True,
-                topic="interview",
-            )
-            logger.info("[QUESTION publish] turn=%d", len(self.interview.history))
-        except Exception as e:
-            logger.warning("[QUESTION publish 실패] %s — 음성은 이미 전달됨, 면접 계속", e)
+                # ── 족보(Parent) 역순 추적 로직 ──
+                parent_turn_number = 0
+                if is_follow_up and history:
+                    # 대화 기록을 뒤에서부터 역순으로 훑습니다.
+                    for idx, turn in enumerate(reversed(history)):
+                        # 역순 인덱스(idx)를 원래 history의 진짜 인덱스로 변환합니다.
+                        real_idx = len(history) - 1 - idx
+
+                        # 꼬리질문이 아닌 최초의 '메인 질문'을 찾았다면!
+                        if not turn.is_follow_up:
+                            # 해당 질문의 턴 번호(인덱스 + 1)를 부모 번호로 확정합니다.
+                            parent_turn_number = real_idx + 1
+                            break
+
+                payload = {
+                    "type": "QUESTION",
+                    "payload": {
+                        "turnNumber": len(history) + 1,  # 새로 나갈 질문의 턴 번호
+                        "text": result["question"],
+                        "intent": result.get("question_types", ""),
+                        "isFollowUp": is_follow_up,
+                        "parentTurnNumber": parent_turn_number,  # 추적한 올바른 부모 번호 주입
+                    },
+                }
+                await self.session.room_io.room.local_participant.publish_data(
+                    payload=json.dumps(payload).encode("utf-8"),
+                    reliable=True,
+                    topic="interview",
+                )
+                logger.info("[QUESTION publish] turn=%d parent=%d", len(history) + 1, parent_turn_number)
+            except Exception as e:
+                logger.warning("[QUESTION publish 실패] %s — 음성은 이미 전달됨, 면접 계속", e)
+
 
     async def _choose_next_question(self) -> tuple[dict[str, str], bool]:
         """마지막 답변을 요약/판단한 뒤 FOLLOW_UP 또는 NEXT_QUESTION 으로 분기한다."""
@@ -691,42 +704,58 @@ class GroupInterviewerAgent(Agent):
 
             await asyncio.sleep(0.2)
 
+    #그룹면접 꼬리질문 수정
     async def _publish_question(
-        self,
-        result: dict,
-        participant: ParticipantInterviewSession,
-        turn_number: int,
-        is_follow_up: bool,
-    ) -> None:
-        try:
-            await update_current_speaker(
-                session_id=self.group.session_id,
-                turn_number=turn_number,
-                member_id=participant.member_id,
-                identity=participant.identity,
-            )
-            payload = {
-                "type": "QUESTION",
-                "payload": {
-                    "turnNumber": turn_number,
-                    "text": result["question"],
-                    "intent": result.get("intent", ""),
-                    "isFollowUp": is_follow_up,
-                    "targetIdentity": participant.identity,
-                },
-            }
-            await self.session.room_io.room.local_participant.publish_data(
-                payload=json.dumps(payload).encode("utf-8"),
-                reliable=True,
-                topic="interview",
-            )
-            logger.info(
-                "[GROUP QUESTION publish] turn=%d target=%s",
-                turn_number,
-                participant.identity,
-            )
-        except Exception as e:
-            logger.warning("[GROUP QUESTION publish 실패] %s — 면접 계속", e)
+            self,
+            result: dict,
+            participant: ParticipantInterviewSession,
+            turn_number: int,
+            is_follow_up: bool,
+        ) -> None:
+            try:
+                await update_current_speaker(
+                    session_id=self.group.session_id,
+                    turn_number=turn_number,
+                    member_id=participant.member_id,
+                    identity=participant.identity,
+                )
+
+                # ── 그룹 면접 족보(Parent) 역순 추적 로직 ──
+                parent_turn_number = 0
+                history = participant.interview.history
+                if is_follow_up and history:
+                    # 이 참가자의 대화 기록을 뒤에서부터 역순으로 훑습니다.
+                    for turn in reversed(history):
+                        if not getattr(turn, "is_follow_up", False):
+                            # 메인 질문 오브젝트가 가지고 있는 고유 turn_number를 가져옵니다.
+                            parent_turn_number = getattr(turn, "turn_number", 0)
+                            break
+
+                payload = {
+                    "type": "QUESTION",
+                    "payload": {
+                        "turnNumber": turn_number,
+                        "text": result["question"],
+                        "intent": result.get("intent", ""),
+                        "isFollowUp": is_follow_up,
+                        "parentTurnNumber": parent_turn_number,  # 누락되었던 필드 추가 및 데이터 주입
+                        "targetIdentity": participant.identity,
+                    },
+                }
+                await self.session.room_io.room.local_participant.publish_data(
+                    payload=json.dumps(payload).encode("utf-8"),
+                    reliable=True,
+                    topic="interview",
+                )
+                logger.info(
+                    "[GROUP QUESTION publish] turn=%d parent=%d target=%s",
+                    turn_number,
+                    parent_turn_number,
+                    participant.identity,
+                )
+            except Exception as e:
+                logger.warning("[GROUP QUESTION publish 실패] %s — 면접 계속", e)
+
 
     async def _handle_participant_left(self, payload: dict) -> None:
         identity = payload.get("identity")
