@@ -113,6 +113,7 @@ class InterviewerAgent(Agent):
     ):
         super().__init__(instructions="")  # LiveKit 기본 LLM 미사용
         self._llm_service = llm_service
+        self._transitioning_turn = False
         self.interview = InterviewSession(
             session_id=session_id,
             job_role=job_role,
@@ -202,50 +203,47 @@ class InterviewerAgent(Agent):
             logger.warning("[QUESTION publish 실패] %s — 음성은 이미 전달됨, 면접 계속", e)
 
     async def _handle_next(self, payload: dict) -> None:
-        """NEXT 수신: ① STT 버퍼 flush → ② QnA 저장 (fire-and-forget) → ③ 다음 질문 생성·발화 → ④ QUESTION publish.
-
-        §5.3 처리 순서:
-        1. STT 버퍼에 누적된 텍스트를 직전 턴에 기록
-        2. 직전 턴의 Q+A를 Backend로 저장 (fire-and-forget)
-        3. 다음 질문 생성
-        4. TTS 발화 → 재생 완료 후 QUESTION 메시지 publish
-        """
+        """NEXT 수신: STT 버퍼 flush, QnA 저장, 다음 질문 생성/발화, QUESTION publish."""
         turn_number = payload.get("turnNumber", 0)
         logger.info("[NEXT 수신] turnNumber=%d", turn_number)
 
-        # ① STT 버퍼 flush → 직전 턴 답변 기록
-        answer = self.interview.flush_buffer()
-        self.interview.add_answer(answer)
-        logger.info("[답변 확정] turn=%d answer_len=%d", turn_number - 1, len(answer))
-
-        # ② QnA 저장 — fire-and-forget (§5.5)
-        prev_turn = self.interview.history[-1] if self.interview.history else None
-        if prev_turn:
-            prev_turn_number = len(self.interview.history)
-            asyncio.create_task(save_qna(
-                session_id=self.interview.session_id,
-                turn_number=prev_turn_number,
-                question=prev_turn.question,
-                intent=prev_turn.intent,
-                is_follow_up=prev_turn.is_follow_up,
-                answer=prev_turn.answer,
-            ))
-
-        # ③ 다음 질문 생성·발화
-        try:
-            result = await self._llm_service.generate_next_topic(self.interview)
-        except Exception as e:
-            logger.exception("다음 질문 생성 실패 (NEXT): %s", e)
-            await self.session.say(
-                "죄송합니다, 잠시 문제가 생겼습니다. 다음 질문으로 넘어가겠습니다."
-            )
+        if self._transitioning_turn:
+            logger.warning("[NEXT 중복 무시] 이미 처리 중인 NEXT가 있음 turnNumber=%d", turn_number)
             return
 
-        logger.info("[다음 질문] turn=%d question=%s", turn_number, result["question"])
-        await self.session.say(result["question"])
+        self._transitioning_turn = True
+        try:
+            answer = self.interview.flush_buffer()
+            self.interview.add_answer(answer)
+            logger.info("[답변 확정] turn=%d answer_len=%d", turn_number - 1, len(answer))
 
-        # ④ QUESTION publish — TTS say()가 재생 완료까지 기다리므로 여기서 publish (§5.4)
-        await self._publish_question(result, is_follow_up=False)
+            prev_turn = self.interview.history[-1] if self.interview.history else None
+            if prev_turn:
+                prev_turn_number = len(self.interview.history)
+                asyncio.create_task(save_qna(
+                    session_id=self.interview.session_id,
+                    turn_number=prev_turn_number,
+                    question=prev_turn.question,
+                    intent=prev_turn.intent,
+                    is_follow_up=prev_turn.is_follow_up,
+                    answer=prev_turn.answer,
+                ))
+
+            try:
+                result = await self._llm_service.generate_next_topic(self.interview)
+            except Exception as e:
+                logger.exception("다음 질문 생성 실패 (NEXT): %s", e)
+                await self.session.say(
+                    "죄송합니다. 잠시 문제가 생겼습니다. 다음 질문으로 넘어가겠습니다."
+                )
+                return
+
+            logger.info("[다음 질문] turn=%d question=%s", turn_number, result["question"])
+            await self.session.say(result["question"])
+
+            await self._publish_question(result, is_follow_up=False)
+        finally:
+            self._transitioning_turn = False
 
     async def _handle_end(self, payload: dict) -> None:
         """END 수신: ① STT 버퍼 flush → ② 마지막 턴 저장 (await) → ③ shutdown.
@@ -301,6 +299,10 @@ class InterviewerAgent(Agent):
         """
         user_answer = _extract_last_user_text(chat_ctx)
         logger.info("[llm_node 답변 수신] %s", user_answer)
+
+        if self._transitioning_turn:
+            logger.warning("[llm_node 스킵] _handle_next 처리 중 - 중복 실행 방지")
+            return
 
         if not user_answer.strip():
             yield "답변이 제대로 들리지 않았습니다. 다시 말씀해 주시겠어요?"
