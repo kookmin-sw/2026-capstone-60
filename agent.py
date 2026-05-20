@@ -218,16 +218,11 @@ class InterviewerAgent(Agent):
 
                 # ── 족보(Parent) 역순 추적 로직 ──
                 parent_turn_number = 0
-                if is_follow_up and history:
-                    # 대화 기록을 뒤에서부터 역순으로 훑습니다.
-                    for idx, turn in enumerate(reversed(history)):
-                        # 역순 인덱스(idx)를 원래 history의 진짜 인덱스로 변환합니다.
-                        real_idx = len(history) - 1 - idx
-
-                        # 꼬리질문이 아닌 최초의 '메인 질문'을 찾았다면!
+                if is_follow_up and len(history) >= 2:
+                    # 마지막 항목은 방금 추가된 현재 꼬리질문이므로 제외하고, 그 이전부터 탐색
+                    for turn in reversed(history[:-1]):
                         if not turn.is_follow_up:
-                            # 해당 질문의 턴 번호(인덱스 + 1)를 부모 번호로 확정합니다.
-                            parent_turn_number = real_idx + 1
+                            parent_turn_number = history.index(turn) + 1
                             break
 
                 payload = {
