@@ -75,6 +75,7 @@ public class InternalQnaService {
                     .questionContent(request.question())
                     .answerContent(request.answer() != null ? request.answer() : "")
                     .isFollowUp(request.isFollowUp() != null && request.isFollowUp())
+                    .parent(resolveParent(interview, request))
                     .intent(request.intent())
                     .answerSummary(toJson(request.answerSummary()))
                     .followUpDecision(request.followUpDecision())
@@ -153,5 +154,13 @@ public class InternalQnaService {
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException("answerSummary JSON serialization failed", e);
         }
+    }
+
+    private InterviewQna resolveParent(Interview interview, InternalQnaRequest request) {
+        if (request.parentTurnNumber() == null || request.parentTurnNumber() <= 0) {
+            return null;
+        }
+        return interviewQnaRepository.findByInterviewAndSequenceNumber(interview, request.parentTurnNumber())
+                .orElse(null);
     }
 }
