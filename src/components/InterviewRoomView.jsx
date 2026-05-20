@@ -456,13 +456,16 @@ export default function InterviewRoomView({
             </Button>
           </div>
 
-          {/* Next Question — 그룹 면접은 호스트만 */}
-          {(!isGroup || isHost) && (
+          {/* Next Question — 그룹 면접은 호스트만 요청 가능 (게스트는 비활성) */}
+          <div className="flex flex-col items-center gap-1">
             <Button
               variant="ghost"
               onClick={onNextQuestion}
-              disabled={!canAskNext || nextLoading || ending}
-              className="rounded-xl px-8 h-14 text-slate-700 hover:bg-slate-100 gap-2 font-medium"
+              disabled={!canAskNext || nextLoading || ending || (isGroup && !isHost)}
+              title={
+                isGroup && !isHost ? "호스트만 다음 질문을 요청할 수 있습니다" : undefined
+              }
+              className="rounded-xl px-8 h-14 text-slate-700 hover:bg-slate-100 gap-2 font-medium disabled:opacity-50"
             >
               {nextLoading ? (
                 <>
@@ -476,7 +479,10 @@ export default function InterviewRoomView({
                 </>
               )}
             </Button>
-          )}
+            {isGroup && !isHost && (
+              <p className="text-xs text-slate-400">호스트만 다음 질문을 요청할 수 있습니다</p>
+            )}
+          </div>
         </div>
       </motion.div>
     </div>
