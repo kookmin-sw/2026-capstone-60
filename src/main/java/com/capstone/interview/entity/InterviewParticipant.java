@@ -46,6 +46,9 @@ public class InterviewParticipant {
     @Column(name = "overall_score", length = 20)
     private String overallScore;
 
+    @Column(name = "left_at")
+    private LocalDateTime leftAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -70,6 +73,14 @@ public class InterviewParticipant {
     public void saveTotalFeedback(String totalFeedback, String overallScore) {
         this.totalFeedback = totalFeedback;
         this.overallScore = overallScore;
+    }
+
+    public void markLeft() {
+        this.leftAt = LocalDateTime.now();
+    }
+
+    public boolean hasLeft() {
+        return leftAt != null;
     }
 
     public boolean hasFeedback() {

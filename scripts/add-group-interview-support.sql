@@ -16,10 +16,13 @@ CREATE TABLE IF NOT EXISTS interview_participants (
     resume_id BIGINT REFERENCES resumes(id),
     total_feedback TEXT,
     overall_score VARCHAR(20),
+    left_at TIMESTAMP,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     CONSTRAINT uk_interview_participant UNIQUE (interview_id, member_id)
 );
+
+ALTER TABLE interview_participants ADD COLUMN IF NOT EXISTS left_at TIMESTAMP;
 
 CREATE INDEX IF NOT EXISTS idx_interview_participants_interview ON interview_participants(interview_id);
 CREATE INDEX IF NOT EXISTS idx_interview_participants_member ON interview_participants(member_id);

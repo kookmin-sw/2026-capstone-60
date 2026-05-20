@@ -138,6 +138,80 @@ class GroupInterviewFlowTest {
                 "START".equals(m.get("type")) && !m.containsKey("payload")));
     }
 
+    @Test
+    void nextTurn_allowsCurrentSpeakerGuest() {
+        Interview interview = groupInterviewInProgress();
+        interview.setCurrentSpeakerMemberId(guest.getId());
+        InterviewParticipant guestP = InterviewParticipant.builder()
+                .interview(interview).member(guest).role(ParticipantRole.GUEST).ready(true).build();
+
+        loginAs(guest);
+        when(memberRepository.findByLoginId("guest")).thenReturn(Optional.of(guest));
+        when(interviewRepository.findBySessionId("sess-group-1")).thenReturn(Optional.of(interview));
+        when(participantRepository.findByInterviewAndMember(interview, guest)).thenReturn(Optional.of(guestP));
+        when(interviewQnaRepository.countByInterview(interview)).thenReturn(1);
+        when(interviewQnaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        NextTurnResponse response = interviewService.nextTurn(
+                "sess-group-1",
+                new NextTurnRequest(1));
+
+        assertEquals(2, response.data().turnNumber());
+        verify(liveKitRoomService).sendData(eq("room-1"), argThat(m -> "NEXT".equals(m.get("type"))));
+    }
+
+    @Test
+    void nextTurn_rejectsNonCurrentSpeaker() {
+        Interview interview = groupInterviewInProgress();
+        interview.setCurrentSpeakerMemberId(host.getId());
+        InterviewParticipant guestP = InterviewParticipant.builder()
+                .interview(interview).member(guest).role(ParticipantRole.GUEST).ready(true).build();
+
+        loginAs(guest);
+        when(memberRepository.findByLoginId("guest")).thenReturn(Optional.of(guest));
+        when(interviewRepository.findBySessionId("sess-group-1")).thenReturn(Optional.of(interview));
+        when(participantRepository.findByInterviewAndMember(interview, guest)).thenReturn(Optional.of(guestP));
+
+        assertThrows(RuntimeException.class, () -> interviewService.nextTurn(
+                "sess-group-1",
+                new NextTurnRequest(1)));
+    }
+
+    @Test
+    void leaveSession_marksParticipantLeftWithoutCompletingInterview() {
+        Interview interview = groupInterviewInProgress();
+        InterviewParticipant guestP = InterviewParticipant.builder()
+                .interview(interview).member(guest).role(ParticipantRole.GUEST).ready(true).build();
+
+        loginAs(guest);
+        when(memberRepository.findByLoginId("guest")).thenReturn(Optional.of(guest));
+        when(interviewRepository.findBySessionId("sess-group-1")).thenReturn(Optional.of(interview));
+        when(participantRepository.findByInterviewAndMember(interview, guest)).thenReturn(Optional.of(guestP));
+
+        SessionEndResponse response = interviewService.leaveSession("sess-group-1");
+
+        assertEquals("LEFT", response.data().status());
+        assertTrue(guestP.hasLeft());
+        assertEquals(InterviewStatus.IN_PROGRESS, interview.getStatus());
+        verify(liveKitRoomService).sendData(eq("room-1"), argThat(m -> "PARTICIPANT_LEFT".equals(m.get("type"))));
+    }
+
+    private Interview groupInterviewInProgress() {
+        Interview interview = Interview.builder()
+                .member(host)
+                .category("BACKEND")
+                .sessionId("sess-group-1")
+                .roomName("room-1")
+                .durationMinutes(15)
+                .maxParticipants(2)
+                .mode(InterviewMode.GROUP)
+                .build();
+        interview.enterWaitingLobby();
+        interview.start();
+        setId(interview, 10L);
+        return interview;
+    }
+
     private void loginAs(Member member) {
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(member.getLoginId(), null));
