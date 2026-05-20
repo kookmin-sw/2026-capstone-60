@@ -8,6 +8,7 @@ import java.util.List;
 @Builder
 public class FeedbackResponse {
     private boolean success;
+    private String status;
     private String totalFeedback; // AI의 전체 총평
     private String overallScore;
     private String competencyChart; //차트
