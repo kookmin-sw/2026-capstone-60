@@ -233,7 +233,7 @@ class InterviewerAgent(Agent):
                 payload = {
                     "type": "QUESTION",
                     "payload": {
-                        "turnNumber": len(history) + 1,  # 새로 나갈 질문의 턴 번호
+                        "turnNumber": len(history),  # history에 이미 추가된 상태
                         "text": result["question"],
                         "intent": result.get("question_types", ""),
                         "isFollowUp": is_follow_up,
