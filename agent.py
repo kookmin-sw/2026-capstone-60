@@ -531,7 +531,11 @@ class GroupInterviewerAgent(Agent):
                 return
             transcript = getattr(ev, "transcript", "")
             if getattr(ev, "is_final", True) and transcript:
-                participant = self.group.current_participant()
+                try:
+                    participant = self.group.current_participant()
+                except RuntimeError:
+                    logger.debug("[GROUP STT ignored] no active participants remain")
+                    return
                 participant.interview.append_to_buffer(transcript)
                 logger.info(
                     "[GROUP STT 확정] target=%s text=%s",
@@ -563,6 +567,8 @@ class GroupInterviewerAgent(Agent):
                 asyncio.ensure_future(self._handle_next(payload))
             elif msg_type == "END":
                 asyncio.ensure_future(self._handle_end(payload))
+            elif msg_type == "PARTICIPANT_LEFT":
+                asyncio.ensure_future(self._handle_participant_left(payload))
             else:
                 logger.debug("GROUP 알 수 없는 Data Message type: %s", msg_type)
 
@@ -619,7 +625,15 @@ class GroupInterviewerAgent(Agent):
         is_follow_up: bool,
         focus_point: str = "",
     ) -> None:
-        participant = self.group.current_participant()
+        try:
+            participant = self.group.current_participant()
+        except RuntimeError:
+            logger.info("[GROUP question skipped] no active participants remain")
+            try:
+                self.session.shutdown()
+            except RuntimeError:
+                pass
+            return
         interview = participant.interview
 
         try:
@@ -714,6 +728,42 @@ class GroupInterviewerAgent(Agent):
         except Exception as e:
             logger.warning("[GROUP QUESTION publish 실패] %s — 면접 계속", e)
 
+    async def _handle_participant_left(self, payload: dict) -> None:
+        identity = payload.get("identity")
+        if not identity:
+            logger.warning("[GROUP PARTICIPANT_LEFT ignored] missing identity payload=%s", payload)
+            return
+
+        current_identity = None
+        if self._started and self.group.active_count() > 0:
+            try:
+                current_identity = self.group.current_participant().identity
+            except RuntimeError:
+                current_identity = None
+
+        removed = self.group.mark_left(identity)
+        if not removed:
+            logger.info("[GROUP PARTICIPANT_LEFT ignored] unknown/already-left identity=%s", identity)
+            return
+
+        logger.info("[GROUP participant left] identity=%s active=%d", identity, self.group.active_count())
+
+        if self.group.active_count() == 0:
+            logger.info("[GROUP participant left] no active participants; shutdown session=%s", self.group.session_id)
+            try:
+                self.session.shutdown()
+            except RuntimeError:
+                pass
+            return
+
+        if self._started and identity == current_identity and not self._transitioning_turn:
+            self._transitioning_turn = True
+            self.group.follow_up_active = False
+            await self._ask_current_participant(
+                turn_number=self.group.current_turn_number,
+                is_follow_up=False,
+            )
+
     async def _handle_next(self, payload: dict) -> None:
         if not self._started:
             logger.warning("[GROUP NEXT 무시] 아직 START 전")
@@ -727,7 +777,11 @@ class GroupInterviewerAgent(Agent):
         await asyncio.sleep(STT_DRAIN_DELAY_SECONDS)
         self._transitioning_turn = True
 
-        participant = self.group.current_participant()
+        try:
+            participant = self.group.current_participant()
+        except RuntimeError:
+            logger.info("[GROUP NEXT ignored] no active participants remain")
+            return
         interview = participant.interview
         answer = interview.flush_buffer()
         interview.add_answer(answer)
@@ -762,14 +816,18 @@ class GroupInterviewerAgent(Agent):
 
         if self.group.follow_up_active:
             self.group.follow_up_active = False
-        self.group.advance_speaker()
+        try:
+            self.group.advance_speaker()
+        except RuntimeError:
+            logger.info("[GROUP NEXT stopped] no next active participant")
+            return
         await self._ask_current_participant(turn_number=turn_number, is_follow_up=False)
 
     async def _handle_end(self, payload: dict) -> None:
         reason = payload.get("reason", "UNKNOWN")
         logger.info("[GROUP END 수신] reason=%s", reason)
 
-        if self._started and self.group.participants:
+        if self._started and self.group.active_count() > 0:
             await asyncio.sleep(STT_DRAIN_DELAY_SECONDS)
             self._transitioning_turn = True
             participant = self.group.current_participant()
