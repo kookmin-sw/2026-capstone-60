@@ -44,7 +44,7 @@ from livekit.agents import WorkerOptions
 from livekit.plugins import silero
 
 from ai.llm_service import LLMService, MockLLMService, create_llm_service
-from ai.qna_client import save_qna, update_current_speaker
+from ai.qna_client import notify_session_failed, save_qna, update_current_speaker
 from ai.session import (
     GroupInterviewSession,
     InterviewSession,
@@ -122,6 +122,7 @@ class InterviewerAgent(Agent):
         self._llm_service = llm_service
         self._speaking = False
         self._transitioning_turn = False
+        self._session_active = True
         self.interview = InterviewSession(
             session_id=session_id,
             job_role=job_role,
@@ -153,9 +154,13 @@ class InterviewerAgent(Agent):
 
             await self.session.say(text)
         except RuntimeError as e:
+            self._session_active = False
             logger.warning("[TTS skipped] session is not active: %s", e)
         finally:
             self._speaking = False
+
+    def mark_session_inactive(self) -> None:
+        self._session_active = False
 
     async def on_enter(self) -> None:
         """Room 입장 직후: STT 버퍼링 등록 → Data Message 핸들러 등록 → 첫 질문 발화."""
@@ -335,6 +340,10 @@ class InterviewerAgent(Agent):
         turn_number = payload.get("turnNumber", 0)
         logger.info("[NEXT 수신] turnNumber=%d", turn_number)
 
+        if not self._session_active:
+            logger.warning("[NEXT ignored] agent session is inactive turnNumber=%d", turn_number)
+            return
+
         if self._transitioning_turn:
             logger.warning("[NEXT 중복 무시] 이미 처리 중인 NEXT가 있음 turnNumber=%d", turn_number)
             return
@@ -431,6 +440,10 @@ class InterviewerAgent(Agent):
         logger.info("[END 수신] reason=%s", reason)
 
         # ① STT 버퍼 flush → 마지막 턴 답변 기록
+        if not self._session_active:
+            logger.warning("[END ignored] agent session is inactive reason=%s", reason)
+            return
+
         answer = self.interview.flush_buffer()
         self.interview.add_answer(answer)
         logger.info("[마지막 답변 확정] answer_len=%d", len(answer))
@@ -528,6 +541,7 @@ class GroupInterviewerAgent(Agent):
         self._speaking = False
         self._started = False
         self._transitioning_turn = False
+        self._session_active = True
         self._start_lock = asyncio.Lock()
         self._fallback_task: asyncio.Task | None = None
         self.group = GroupInterviewSession(
@@ -576,9 +590,13 @@ class GroupInterviewerAgent(Agent):
 
             await self.session.say(text)
         except RuntimeError as e:
+            self._session_active = False
             logger.warning("[GROUP TTS skipped] session is not active: %s", e)
         finally:
             self._speaking = False
+
+    def mark_session_inactive(self) -> None:
+        self._session_active = False
 
     async def on_enter(self) -> None:
         """GROUP: STT/Data 핸들러 등록 후 START 또는 fallback 시작을 기다린다."""
@@ -642,6 +660,10 @@ class GroupInterviewerAgent(Agent):
         await self._start_interview(source="fallback")
 
     async def _handle_start(self, payload: dict) -> None:
+        if not self._session_active:
+            logger.warning("[GROUP START ignored] agent session is inactive")
+            return
+
         if self._started:
             logger.info("[GROUP START 무시] 이미 시작됨")
             return
@@ -808,6 +830,10 @@ class GroupInterviewerAgent(Agent):
             logger.warning("[GROUP QUESTION publish 실패] %s — 면접 계속", e)
 
     async def _handle_participant_left(self, payload: dict) -> None:
+        if not self._session_active:
+            logger.warning("[GROUP PARTICIPANT_LEFT ignored] agent session is inactive")
+            return
+
         identity = payload.get("identity")
         if not identity:
             logger.warning(
@@ -876,6 +902,10 @@ class GroupInterviewerAgent(Agent):
             )
 
     async def _handle_next(self, payload: dict) -> None:
+        if not self._session_active:
+            logger.warning("[GROUP NEXT ignored] agent session is inactive")
+            return
+
         if not self._started:
             logger.warning("[GROUP NEXT 무시] 아직 START 전")
             return
@@ -937,6 +967,10 @@ class GroupInterviewerAgent(Agent):
     async def _handle_end(self, payload: dict) -> None:
         reason = payload.get("reason", "UNKNOWN")
         logger.info("[GROUP END 수신] reason=%s", reason)
+
+        if not self._session_active:
+            logger.warning("[GROUP END ignored] agent session is inactive reason=%s", reason)
+            return
 
         if self._started and self.group.active_count() > 0:
             await asyncio.sleep(STT_DRAIN_DELAY_SECONDS)
@@ -1118,12 +1152,28 @@ async def entrypoint(ctx: JobContext) -> None:
     # 사용자 참가 대기 (§9.3: Frontend가 Room 접속 전에 발화하면 첫 질문을 놓침)
     await ctx.wait_for_participant()
 
-    await session.start(
-        agent=agent,
-        room=ctx.room,
-        room_input_options=RoomInputOptions(),
-        room_output_options=RoomOutputOptions(),
-    )
+    session_closed_cleanly = False
+    failure_reason = ""
+    try:
+        await session.start(
+            agent=agent,
+            room=ctx.room,
+            room_input_options=RoomInputOptions(),
+            room_output_options=RoomOutputOptions(),
+        )
+        session_closed_cleanly = True
+    except Exception as e:
+        failure_reason = str(e) or e.__class__.__name__
+        logger.exception("[AgentSession failed] session=%s reason=%s", session_id, failure_reason)
+    finally:
+        if not session_closed_cleanly:
+            mark_inactive = getattr(agent, "mark_session_inactive", None)
+            if callable(mark_inactive):
+                mark_inactive()
+            await notify_session_failed(
+                session_id=session_id,
+                reason=failure_reason or "AgentSession closed unexpectedly",
+            )
 
 
 if __name__ == "__main__":

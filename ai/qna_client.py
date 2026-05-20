@@ -143,3 +143,35 @@ async def update_current_speaker(
             session_id, turn_number, identity, e,
         )
     return False
+
+
+async def notify_session_failed(session_id: str, reason: str) -> bool:
+    """Tell Backend that the LiveKit agent can no longer run this interview."""
+    url = f"{BACKEND_INTERNAL_URL}/internal/v1/interviews/sessions/{session_id}/failed"
+    payload = {"reason": reason[:500] if reason else "AgentSession failed"}
+    headers = {"Content-Type": "application/json"}
+    if SERVICE_TOKEN:
+        headers["X-Service-Token"] = SERVICE_TOKEN
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            async with aiohttp.ClientSession() as client:
+                async with client.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    if resp.status == 200:
+                        logger.warning("[Session failure notified] session=%s", session_id)
+                        return True
+                    body = await resp.text()
+                    logger.warning(
+                        "[Session failure notify failed] session=%s status=%d body=%s (%d/%d)",
+                        session_id, resp.status, body[:200], attempt + 1, MAX_RETRIES,
+                    )
+        except Exception as e:
+            logger.warning(
+                "[Session failure notify error] session=%s error=%s (%d/%d)",
+                session_id, e, attempt + 1, MAX_RETRIES,
+            )
+
+        if attempt < MAX_RETRIES - 1:
+            await asyncio.sleep(BASE_DELAY * (2 ** attempt))
+
+    return False
