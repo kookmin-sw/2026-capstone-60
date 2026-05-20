@@ -1,8 +1,10 @@
 package com.capstone.interview.service;
 
 import com.capstone.interview.dto.InternalQnaRequest;
+import com.capstone.interview.dto.InternalSessionFailureRequest;
 import com.capstone.interview.dto.InternalSpeakerRequest;
 import com.capstone.interview.entity.Interview;
+import com.capstone.interview.entity.InterviewStatus;
 import com.capstone.interview.entity.InterviewQna;
 import com.capstone.interview.event.QnaSavedEvent;
 import com.capstone.interview.exception.SessionNotFoundException;
@@ -112,6 +114,21 @@ public class InternalQnaService {
 
         interview.setCurrentSpeakerMemberId(memberId);
         interviewRepository.save(interview);
+    }
+
+    @Transactional
+    public void markSessionFailed(String sessionId, InternalSessionFailureRequest request) {
+        Interview interview = interviewRepository.findBySessionId(sessionId)
+                .orElseThrow(() -> new SessionNotFoundException("session not found: " + sessionId));
+
+        if (interview.getStatus() == InterviewStatus.COMPLETED || interview.getStatus() == InterviewStatus.FAILED) {
+            log.info("[Session failed ignored] sessionId={}, status={}", sessionId, interview.getStatus());
+            return;
+        }
+
+        interview.fail();
+        interviewRepository.save(interview);
+        log.warn("[Session marked failed] sessionId={}, reason={}", sessionId, request.reason());
     }
 
     private Long parseMemberIdFromIdentity(String identity) {
