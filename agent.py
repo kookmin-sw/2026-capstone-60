@@ -43,7 +43,7 @@ from livekit.agents import (
 from livekit.plugins import silero
 
 from ai.llm_service import LLMService, MockLLMService, create_llm_service
-from ai.qna_client import save_qna
+from ai.qna_client import save_qna, update_current_speaker
 from ai.session import (
     GroupInterviewSession,
     InterviewSession,
@@ -685,6 +685,12 @@ class GroupInterviewerAgent(Agent):
         is_follow_up: bool,
     ) -> None:
         try:
+            await update_current_speaker(
+                session_id=self.group.session_id,
+                turn_number=turn_number,
+                member_id=participant.member_id,
+                identity=participant.identity,
+            )
             payload = {
                 "type": "QUESTION",
                 "payload": {
