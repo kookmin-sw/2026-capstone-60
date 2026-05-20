@@ -284,10 +284,12 @@ public class InterviewService {
             log.warn("[leave] sendData(PARTICIPANT_LEFT) 실패 sessionId={}", sessionId, e);
         }
 
+        evaluationService.evaluateParticipant(sessionId, member.getId());
+
         return new SessionEndResponse(
                 true,
-                "그룹 면접에서 나갔습니다.",
-                new SessionEndResponse.Data("LEFT")
+                "그룹 면접에서 나갔습니다. 개인 피드백을 생성 중입니다.",
+                new SessionEndResponse.Data("EVALUATING")
         );
     }
 
