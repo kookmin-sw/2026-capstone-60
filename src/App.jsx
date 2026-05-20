@@ -270,6 +270,11 @@ export default function App() {
         setEnding(true);
         setError("");
         await leaveInterviewSession(session.sessionId);
+        if (options.awaitFeedback) {
+          setSession((prev) => (prev ? { ...prev, status: "EVALUATING" } : prev));
+          navigate(ROUTE.EVALUATING);
+          return;
+        }
         setSession(null);
         if (options.showHistoryHint) {
           sessionStorage.setItem(
@@ -303,7 +308,7 @@ export default function App() {
       const isHost = session.role === "HOST";
 
       if (isGroup && !isHost) {
-        await leaveSession();
+        await leaveSession({ awaitFeedback: true });
         return;
       }
 
@@ -546,7 +551,7 @@ export default function App() {
               <InterviewRoom
                 session={session}
                 onSessionEnd={endSession}
-                onSessionLeave={() => leaveSession({ showHistoryHint: true })}
+                onSessionLeave={() => leaveSession({ awaitFeedback: true })}
                 onGuestFeedbackReady={handleGuestFeedbackReady}
                 ending={ending}
               />

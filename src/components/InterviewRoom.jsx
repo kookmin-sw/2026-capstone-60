@@ -385,8 +385,8 @@ export default function InterviewRoom({
 
     if (isGroup && !isHost) {
       const ok = window.confirm(
-        "지금 나가면 실시간 결과 화면으로 이동하지 않습니다.\n" +
-          "호스트가 면접을 종료한 뒤 「면접 기록」에서 본인 피드백을 확인할 수 있습니다.\n" +
+        "지금 나가면 현재까지의 답변으로 개인 피드백을 생성합니다.\n" +
+          "남은 참가자의 면접은 계속 진행됩니다.\n" +
           "그래도 나가시겠습니까?"
       );
       if (!ok) return;
