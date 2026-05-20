@@ -55,6 +55,15 @@ public class InterviewController {
         return ResponseEntity.ok(response);
     }
 
+    @PostMapping("/{sessionId}/participants/me/leave")
+    public ResponseEntity<SessionEndResponse> leaveSession(@PathVariable String sessionId) {
+        log.info("[그룹 면접 나가기 요청] sessionId={}", sessionId);
+
+        SessionEndResponse response = interviewService.leaveSession(sessionId);
+        log.info("[그룹 면접 나가기 성공] sessionId={}, status={}", sessionId, response.data().status());
+        return ResponseEntity.ok(response);
+    }
+
     @PostMapping("/{sessionId}/join")
     public ResponseEntity<JoinSessionResponse> joinSession(
             @PathVariable String sessionId,

@@ -185,7 +185,11 @@ public class InterviewService {
     @Transactional
     public NextTurnResponse nextTurn(String sessionId, NextTurnRequest request) {
         Interview interview = findInterviewOrThrow(sessionId);
-        verifyHost(interview);
+        if (interview.isGroupMode()) {
+            verifyCurrentSpeaker(interview);
+        } else {
+            verifyOwner(interview);
+        }
         verifyInProgress(interview);
 
         int currentTurn = interviewQnaRepository.countByInterview(interview);
@@ -253,6 +257,38 @@ public class InterviewService {
                 true,
                 "면접이 종료되었습니다. AI 피드백을 생성 중입니다.",
                 new SessionEndResponse.Data(interview.getStatus().name())
+        );
+    }
+
+    @Transactional
+    public SessionEndResponse leaveSession(String sessionId) {
+        Interview interview = findInterviewOrThrow(sessionId);
+        if (!interview.isGroupMode()) {
+            throw new InvalidStateException("그룹 면접에서만 개인 나가기를 사용할 수 있습니다.");
+        }
+
+        Member member = currentMember();
+        InterviewParticipant participant = findParticipantOrThrow(interview, member);
+        participant.markLeft();
+        participantRepository.save(participant);
+
+        try {
+            Map<String, Object> message = Map.of(
+                    "type", "PARTICIPANT_LEFT",
+                    "payload", Map.of(
+                            "memberId", member.getId(),
+                            "identity", participant.liveKitIdentity()
+                    )
+            );
+            liveKitRoomService.sendData(interview.getRoomName(), message);
+        } catch (Exception e) {
+            log.warn("[leave] sendData(PARTICIPANT_LEFT) 실패 sessionId={}", sessionId, e);
+        }
+
+        return new SessionEndResponse(
+                true,
+                "그룹 면접에서 나갔습니다.",
+                new SessionEndResponse.Data("LEFT")
         );
     }
 
@@ -493,6 +529,18 @@ public class InterviewService {
         InterviewParticipant participant = findParticipantOrThrow(interview, member);
         if (participant.getRole() != ParticipantRole.HOST) {
             throw new UnauthorizedException("호스트만 이 작업을 수행할 수 있습니다.");
+        }
+    }
+
+    private void verifyCurrentSpeaker(Interview interview) {
+        Member member = currentMember();
+        findParticipantOrThrow(interview, member);
+        Long currentSpeakerMemberId = interview.getCurrentSpeakerMemberId();
+        if (currentSpeakerMemberId == null) {
+            throw new InvalidStateException("현재 답변자 정보가 아직 준비되지 않았습니다.");
+        }
+        if (!currentSpeakerMemberId.equals(member.getId())) {
+            throw new UnauthorizedException("현재 답변자만 다음 질문을 요청할 수 있습니다.");
         }
     }
 

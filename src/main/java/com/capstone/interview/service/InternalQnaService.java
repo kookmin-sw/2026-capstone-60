@@ -1,6 +1,7 @@
 package com.capstone.interview.service;
 
 import com.capstone.interview.dto.InternalQnaRequest;
+import com.capstone.interview.dto.InternalSpeakerRequest;
 import com.capstone.interview.entity.Interview;
 import com.capstone.interview.entity.InterviewQna;
 import com.capstone.interview.event.QnaSavedEvent;
@@ -86,6 +87,35 @@ public class InternalQnaService {
 
         if (request.turnNumber() != null && request.answerSummary() != null) {
             eventPublisher.publishEvent(new QnaSavedEvent(sessionId, request.turnNumber()));
+        }
+    }
+
+    @Transactional
+    public void updateCurrentSpeaker(String sessionId, InternalSpeakerRequest request) {
+        Interview interview = interviewRepository.findBySessionId(sessionId)
+                .orElseThrow(() -> new SessionNotFoundException("존재하지 않는 세션입니다: " + sessionId));
+
+        Long memberId = request.memberId() != null
+                ? request.memberId()
+                : parseMemberIdFromIdentity(request.identity());
+        if (memberId == null) {
+            log.warn("[Current speaker update] speaker id missing sessionId={}, identity={}",
+                    sessionId, request.identity());
+            return;
+        }
+
+        interview.setCurrentSpeakerMemberId(memberId);
+        interviewRepository.save(interview);
+    }
+
+    private Long parseMemberIdFromIdentity(String identity) {
+        if (identity == null || !identity.startsWith("user-")) {
+            return null;
+        }
+        try {
+            return Long.parseLong(identity.substring("user-".length()));
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 
