@@ -284,7 +284,6 @@ export default function InterviewRoom({
   const isHost = session.role === "HOST";
 
   const requestNextQuestion = async () => {
-    if (isGroup && !isHost) return;
     if (!currentQuestion || !isMyActiveTurn || !canAskNextQuestion || ending) return;
     if (!nextGuard.tryAcquire()) return;
     setNextLoading(true);
@@ -331,11 +330,6 @@ export default function InterviewRoom({
 
   useEffect(() => {
     if (!canAskNextQuestion && answerTimer.secondsLeft === 0 && !ending) {
-      if (isGroup && !isHost) {
-        onSessionLeave?.();
-        roomRef.current?.disconnect();
-        return;
-      }
       onSessionEnd("TIME_OVER");
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -481,8 +475,7 @@ export default function InterviewRoom({
       canAskNext={
         Boolean(currentQuestion) &&
         isMyActiveTurn &&
-        canAskNextQuestion &&
-        (!isGroup || isHost)
+        canAskNextQuestion
       }
       targetIdentity={targetIdentity}
       myIdentity={myIdentity}
