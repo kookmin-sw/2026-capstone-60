@@ -19,8 +19,8 @@ export default function LobbyView({ session, onEnterRoom, onError }) {
         onEnterRoom({
           ...session,
           livekit: data.livekit,
-          role: data.myRole,
-          myIdentity: data.myIdentity,
+          role: data.myRole ?? session.role,
+          myIdentity: data.myIdentity ?? session.myIdentity,
           mode: data.mode,
           status: data.status,
         });
@@ -48,8 +48,8 @@ export default function LobbyView({ session, onEnterRoom, onError }) {
         onEnterRoom({
           ...session,
           livekit: data.livekit,
-          role: data.myRole,
-          myIdentity: data.myIdentity,
+          role: data.myRole ?? session.role,
+          myIdentity: data.myIdentity ?? session.myIdentity,
           mode: data.mode,
           status: data.status,
         });

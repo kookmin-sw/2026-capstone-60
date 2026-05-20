@@ -219,7 +219,7 @@ export default function App() {
       setError("");
       const authUser = await login(loginId, password);
       setUser(authUser);
-      navigate(resolveRedirectTarget(location.search));
+      navigate(resolveRedirectTarget(location.search), { replace: true });
     } catch (loginError) {
       setError(loginError.message);
     } finally {
@@ -469,7 +469,7 @@ export default function App() {
           path={ROUTE.LOGIN}
           element={
             user ? (
-              <Navigate to={ROUTE.HOME} replace />
+              <Navigate to={resolveRedirectTarget(location.search)} replace />
             ) : (
               <LoginForm onLogin={signIn} loading={authLoading} />
             )
@@ -479,7 +479,7 @@ export default function App() {
           path={ROUTE.SIGNUP}
           element={
             user ? (
-              <Navigate to={ROUTE.HOME} replace />
+              <Navigate to={resolveRedirectTarget(location.search)} replace />
             ) : (
               <SignupForm onSignup={signUp} loading={authLoading} />
             )
