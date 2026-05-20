@@ -25,6 +25,7 @@ import {
   endInterviewSession,
   getInterviewResult,
   isMockMode,
+  leaveInterviewSession,
   triggerEvaluation,
   nextQuestion,
 } from "./api/interviewApi";
@@ -268,6 +269,24 @@ export default function App() {
     [ending, session?.sessionId]
   );
 
+  const leaveSession = useCallback(
+    async () => {
+      if (!session?.sessionId || ending) return;
+      try {
+        setEnding(true);
+        setError("");
+        await leaveInterviewSession(session.sessionId);
+        setSession(null);
+        navigate(ROUTE.HOME);
+      } catch (leaveError) {
+        setError(leaveError.message);
+      } finally {
+        setEnding(false);
+      }
+    },
+    [ending, navigate, session?.sessionId]
+  );
+
   useEffect(() => {
     if (location.pathname !== ROUTE.EVALUATING || !session?.sessionId) return undefined;
 
@@ -492,7 +511,12 @@ export default function App() {
           path={ROUTE.ROOM}
           element={
             user && session ? (
-              <InterviewRoom session={session} onSessionEnd={endSession} ending={ending} />
+              <InterviewRoom
+                session={session}
+                onSessionEnd={endSession}
+                onSessionLeave={leaveSession}
+                ending={ending}
+              />
             ) : (
               <Navigate to={ROUTE.SETUP} replace />
             )
