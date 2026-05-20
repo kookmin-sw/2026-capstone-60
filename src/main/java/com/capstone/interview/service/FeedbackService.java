@@ -49,7 +49,7 @@ public class FeedbackService {
             if (rawFeedback == null) {
                 return FeedbackResponse.builder()
                         .success(false)
-                        .totalFeedback(interview.getStatus() == InterviewStatus.COMPLETED
+                        .totalFeedback(interview.getStatus() == InterviewStatus.COMPLETED || participant.hasLeft()
                                 ? "AI 피드백을 생성 중입니다. 잠시 후 다시 시도해주세요."
                                 : "면접이 아직 종료되지 않았습니다.")
                         .qaPairs(List.of())
@@ -104,13 +104,13 @@ public class FeedbackService {
             }
         }
 
-        List<InterviewParticipant> guestRecords =
+        List<InterviewParticipant> participantRecords =
                 participantRepository.findByMemberIdOrderByJoinedAtDesc(member.getId());
-        for (InterviewParticipant p : guestRecords) {
-            Interview interview = p.getInterview();
-            if (interview.getStatus() != InterviewStatus.COMPLETED) {
+        for (InterviewParticipant p : participantRecords) {
+            if (!p.hasFeedback()) {
                 continue;
             }
+            Interview interview = p.getInterview();
             if (interview.getMember() != null && interview.getMember().getId().equals(member.getId())) {
                 continue;
             }

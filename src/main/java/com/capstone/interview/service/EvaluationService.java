@@ -192,6 +192,27 @@ public class EvaluationService {
         }
     }
 
+    @Async
+    @Transactional
+    public void evaluateParticipant(String sessionId, Long memberId) {
+        waitForLastAgentSave();
+
+        Interview interview = interviewRepository.findBySessionId(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("면접 세션을 찾을 수 없습니다: " + sessionId));
+        InterviewParticipant participant = participantRepository
+                .findByInterviewOrderByJoinedAtAsc(interview)
+                .stream()
+                .filter(p -> p.getMember().getId().equals(memberId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("면접 참가자를 찾을 수 없습니다: " + sessionId + "#" + memberId));
+
+        if (participant.hasFeedback()) {
+            log.info("[evaluation skipped] participant already evaluated memberId={}", memberId);
+            return;
+        }
+        evaluateParticipant(interview, participant);
+    }
+
     private void evaluateParticipant(Interview interview, InterviewParticipant participant) {
         Long memberId = participant.getMember().getId();
         List<InterviewQna> qnas = interviewQnaRepository

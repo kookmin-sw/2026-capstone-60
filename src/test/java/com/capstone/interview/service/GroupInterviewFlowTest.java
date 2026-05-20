@@ -191,10 +191,11 @@ class GroupInterviewFlowTest {
 
         SessionEndResponse response = interviewService.leaveSession("sess-group-1");
 
-        assertEquals("LEFT", response.data().status());
+        assertEquals("EVALUATING", response.data().status());
         assertTrue(guestP.hasLeft());
         assertEquals(InterviewStatus.IN_PROGRESS, interview.getStatus());
         verify(liveKitRoomService).sendData(eq("room-1"), argThat(m -> "PARTICIPANT_LEFT".equals(m.get("type"))));
+        verify(evaluationService).evaluateParticipant("sess-group-1", guest.getId());
     }
 
     private Interview groupInterviewInProgress() {
