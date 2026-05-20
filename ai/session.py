@@ -129,15 +129,24 @@ class GroupInterviewSession:
     current_turn_number: int = 1
     last_processed_next_turn_number: int = 0
     follow_up_active: bool = False
+    left_identities: set[str] = field(default_factory=set)
 
     def current_participant(self) -> ParticipantInterviewSession:
         if not self.round_order:
             self.start_new_round()
+        if not self.round_order:
+            raise RuntimeError("No active participants remain")
+        self._skip_left_participants()
+        if not self.round_order:
+            raise RuntimeError("No active participants remain")
         return self.participants[self.round_order[self.round_position]]
 
     def start_new_round(self) -> None:
         self.round_number += 1
-        self.round_order = list(range(len(self.participants)))
+        self.round_order = [
+            index for index, participant in enumerate(self.participants)
+            if participant.identity not in self.left_identities
+        ]
         random.shuffle(self.round_order)
         self.round_position = 0
 
@@ -149,4 +158,40 @@ class GroupInterviewSession:
         self.round_position += 1
         if self.round_position >= len(self.round_order):
             self.start_new_round()
+        self._skip_left_participants()
         return self.current_participant()
+
+    def mark_left(self, identity: str) -> bool:
+        if not identity or identity in self.left_identities:
+            return False
+        if not any(participant.identity == identity for participant in self.participants):
+            return False
+
+        self.left_identities.add(identity)
+        self.round_order = [
+            index for index in self.round_order
+            if self.participants[index].identity != identity
+        ]
+        if self.round_order:
+            self.round_position = min(self.round_position, len(self.round_order) - 1)
+        else:
+            self.round_position = 0
+        return True
+
+    def active_count(self) -> int:
+        return sum(
+            1 for participant in self.participants
+            if participant.identity not in self.left_identities
+        )
+
+    def _skip_left_participants(self) -> None:
+        if not self.round_order:
+            return
+        self.round_order = [
+            index for index in self.round_order
+            if self.participants[index].identity not in self.left_identities
+        ]
+        if not self.round_order:
+            self.round_position = 0
+            return
+        self.round_position = min(self.round_position, len(self.round_order) - 1)
