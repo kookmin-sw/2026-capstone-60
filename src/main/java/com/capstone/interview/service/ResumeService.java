@@ -26,6 +26,7 @@ import java.util.List;
 public class ResumeService {
 
     private final PdfParserService pdfParserService;
+    private final ResumePreprocessorService resumePreprocessorService;
     private final ResumeRepository resumeRepository;
     private final MemberRepository memberRepository;
     private final InterviewRepository interviewRepository;
@@ -48,10 +49,12 @@ public class ResumeService {
         }
 
         // DB 저장
+        String keywords = preprocessSafely(originalText);
         Resume resume = Resume.builder()
                 .member(member)
                 .title(title)
                 .originalText(originalText)
+                .keywords(keywords)
                 .build();
 
         Resume saved = resumeRepository.save(resume);
@@ -73,10 +76,12 @@ public class ResumeService {
             throw new IllegalArgumentException("이력서 텍스트가 비어있습니다.");
         }
 
+        String keywords = preprocessSafely(request.originalText());
         Resume resume = Resume.builder()
                 .member(member)
                 .title(request.title())
                 .originalText(request.originalText())
+                .keywords(keywords)
                 .build();
 
         Resume saved = resumeRepository.save(resume);
@@ -141,5 +146,14 @@ public class ResumeService {
                 resume.getKeywords(),
                 resume.getCreatedAt()
         );
+    }
+
+    private String preprocessSafely(String originalText) {
+        try {
+            return resumePreprocessorService.preprocess(originalText);
+        } catch (Exception e) {
+            log.warn("[이력서 전처리 실패] 원문 저장은 계속 진행합니다. reason={}", e.getMessage());
+            return null;
+        }
     }
 }

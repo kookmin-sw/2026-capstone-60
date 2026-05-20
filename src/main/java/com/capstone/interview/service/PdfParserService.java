@@ -30,11 +30,48 @@ public class PdfParserService {
         try (PDDocument document = Loader.loadPDF(bytes)) {
 
             PDFTextStripper stripper = new PDFTextStripper();
-            String text = stripper.getText(document);
+            stripper.setSortByPosition(true);
 
-            String cleanedText = text.replace("\u0000", "");
+            String text = stripper.getText(document);
+            String cleanedText = cleanExtractedText(text);
             log.info("[PDF 파싱] 완료: {}페이지, {}글자", document.getNumberOfPages(), cleanedText.length());
-            return cleanedText.trim();
+            return cleanedText;
         }
+    }
+
+    private String cleanExtractedText(String text) {
+        if (text == null) {
+            return "";
+        }
+
+        String normalized = text
+                .replace("\u0000", "")
+                .replace("\r\n", "\n")
+                .replace("\r", "\n");
+
+        String[] lines = normalized.split("\n");
+        StringBuilder builder = new StringBuilder();
+        boolean previousBlank = false;
+
+        for (String line : lines) {
+            String cleanedLine = line.replaceAll("[\\t\\f\\x0B]+", " ")
+                    .replaceAll(" {2,}", " ")
+                    .trim();
+            if (cleanedLine.isBlank()) {
+                if (!previousBlank && !builder.isEmpty()) {
+                    builder.append('\n');
+                }
+                previousBlank = true;
+                continue;
+            }
+
+            if (!builder.isEmpty() && !previousBlank) {
+                builder.append('\n');
+            }
+            builder.append(cleanedLine);
+            previousBlank = false;
+        }
+
+        return builder.toString().trim();
     }
 }
