@@ -80,7 +80,6 @@ export default function InterviewRoomView({
   targetIdentity = null,
   myIdentity = null,
   isGroup = false,
-  isHost = true,
 }) {
   const turnHint = isGroup && targetIdentity
     ? (targetIdentity === myIdentity ? "지금 답변할 차례입니다" : `답변 차례: ${targetIdentity}`)
@@ -255,9 +254,6 @@ export default function InterviewRoomView({
                 {turnHint && (
                   <p className="text-sm font-medium text-blue-700 mb-3">{turnHint}</p>
                 )}
-                {!isHost && isGroup && (
-                  <p className="text-xs text-slate-500 mb-3">관전 모드 — 다음/종료는 호스트만 가능합니다</p>
-                )}
                 <AnimatePresence mode="wait">
                   <motion.h2
                     key={questionText}
@@ -409,7 +405,7 @@ export default function InterviewRoomView({
             ) : (
               <>
                 <Square className="size-4 fill-current" />
-                <span className="text-sm">면접 종료</span>
+                <span className="text-sm">{isGroup ? "나가기" : "면접 종료"}</span>
               </>
             )}
           </Button>

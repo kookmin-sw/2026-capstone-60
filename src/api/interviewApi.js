@@ -78,6 +78,15 @@ export function endInterviewSession(sessionId, reason) {
   });
 }
 
+export function leaveInterviewSession(sessionId) {
+  if (USE_MOCK_SESSION) {
+    return leaveMockSession(sessionId);
+  }
+  return request(`/sessions/${sessionId}/participants/me/leave`, {
+    method: "POST",
+  });
+}
+
 /**
  * 평가 서비스 직접 실행 API (추가)
  * 백엔드의 '직접 호출' 로직: /{sessionId}/evaluate
@@ -321,6 +330,15 @@ async function endMockSession(sessionId, reason) {
     success: true,
     message: "면접이 종료되었습니다. AI 피드백을 생성 중입니다.",
     data: { status: "EVALUATING" },
+  };
+}
+
+async function leaveMockSession(sessionId) {
+  await delay(200);
+  return {
+    success: true,
+    message: "그룹 면접에서 나갔습니다.",
+    data: { status: "LEFT" },
   };
 }
 

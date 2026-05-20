@@ -26,7 +26,7 @@ const EXPIRES_AT_FALLBACK_THRESHOLD_MS = 5000;
 // 화면에 표시하지 않는 로그 타입 (시스템 메시지 등)
 const HIDDEN_LOG_TYPES = new Set(["SYSTEM"]);
 
-export default function InterviewRoom({ session, onSessionEnd, ending }) {
+export default function InterviewRoom({ session, onSessionEnd, onSessionLeave, ending }) {
   const roomRef = useRef(null);
   const myIdentityRef = useRef("");
   const [isConnected, setIsConnected] = useState(false);
@@ -45,9 +45,9 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
   const [targetIdentity, setTargetIdentity] = useState(null);
 
   const isGroup = session.mode === "GROUP";
-  const isHost = !isGroup || session.role === "HOST";
   const myIdentity = session.myIdentity || localIdentity;
   myIdentityRef.current = myIdentity || "";
+  const isMyActiveTurn = !isGroup || !targetIdentity || targetIdentity === myIdentity;
 
   const answerTimeLimitSeconds = session.answerTimeLimitSeconds || 90;
   const totalDurationSeconds = session.totalDurationSeconds || session.durationMinutes * 60;
@@ -146,6 +146,28 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
   const handleDataReceived = useCallback((payload) => {
     try {
       const msg = JSON.parse(new TextDecoder().decode(payload));
+      if (msg.type === "NEXT") {
+        const { turnNumber } = msg.payload || {};
+        if (typeof turnNumber === "number") updateTurn(turnNumber);
+        setCurrentQuestion("");
+        setWaitingForAgent(false);
+        setAgentTimedOut(false);
+        setWarningVisible(false);
+        setAnswerExpiresAt(null);
+        setTargetIdentity(null);
+        setCurrentTurnRole("ai");
+        addLog("SYSTEM", `다음 질문을 준비 중입니다. (Q${turnNumber ?? turnRef.current})`);
+        return;
+      }
+
+      if (msg.type === "PARTICIPANT_LEFT") {
+        const { identity } = msg.payload || {};
+        if (identity && identity !== myIdentityRef.current) {
+          addLog("SYSTEM", `${identity} 님이 면접에서 나갔습니다.`);
+        }
+        return;
+      }
+
       if (msg.type === "QUESTION") {
         const { turnNumber, text, targetIdentity: target } = msg.payload || {};
         if (typeof turnNumber === "number" && turnNumber !== turnRef.current) {
@@ -254,7 +276,7 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
   }, [isConnected, waitingForAgent, session.livekit?.isMock]);
 
   const requestNextQuestion = async () => {
-    if (!isHost || !canAskNextQuestion || ending) return;
+    if (!currentQuestion || !isMyActiveTurn || !canAskNextQuestion || ending) return;
     if (!nextGuard.tryAcquire()) return;
     setNextLoading(true);
     setCurrentTurnRole("ai");
@@ -316,7 +338,14 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
     await setLocalMicPublish(next);
   };
 
-  const endInterview = async () => { await onSessionEnd("USER_STOP"); };
+  const endInterview = async () => {
+    if (isGroup) {
+      await onSessionLeave?.();
+      roomRef.current?.disconnect();
+      return;
+    }
+    await onSessionEnd("USER_STOP");
+  };
 
   // ── 대기 화면 ──────────────────────────────────────────────
   if (waitingForAgent && !session.livekit?.isMock) {
@@ -391,12 +420,11 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
       isMicToggleDisabled={Boolean(isGroup && targetIdentity && targetIdentity !== myIdentity)}
       onToggleMic={toggleMic}
       onNextQuestion={requestNextQuestion}
-      onEndInterview={isHost ? endInterview : () => {}}
-      canAskNext={isHost && canAskNextQuestion}
+      onEndInterview={endInterview}
+      canAskNext={Boolean(currentQuestion) && isMyActiveTurn && canAskNextQuestion}
       targetIdentity={targetIdentity}
       myIdentity={myIdentity}
       isGroup={isGroup}
-      isHost={isHost}
       nextLoading={nextLoading}
       ending={ending}
 
