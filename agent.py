@@ -289,20 +289,6 @@ class InterviewerAgent(Agent):
             return await self._llm_service.generate_next_topic(self.interview), False
 
 
-        judgment = await self._analyze_last_turn()
-        if judgment is None:
-            return await self._llm_service.generate_next_topic(self.interview), False
-
-        if judgment.decision == "FOLLOW_UP":
-            result = await self._llm_service.generate_follow_up(
-                self.interview,
-                judgment.focus_point,
-            )
-            return result, True
-
-        return await self._llm_service.generate_next_topic(self.interview), False
-
-
     async def _analyze_last_turn(self):
         """Analyze and cache the latest answer. Returns None if analysis fails."""
         try:
