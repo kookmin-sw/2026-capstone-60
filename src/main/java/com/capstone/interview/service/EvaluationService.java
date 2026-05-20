@@ -5,6 +5,7 @@ import com.capstone.interview.entity.Interview;
 import com.capstone.interview.entity.InterviewMode;
 import com.capstone.interview.entity.InterviewParticipant;
 import com.capstone.interview.entity.InterviewQna;
+import com.capstone.interview.entity.InterviewStatus;
 import com.capstone.interview.event.QnaSavedEvent;
 import com.capstone.interview.repository.InterviewParticipantRepository;
 import com.capstone.interview.repository.InterviewQnaRepository;
@@ -137,6 +138,11 @@ public class EvaluationService {
         Interview interview = interviewRepository.findBySessionId(sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("면접 세션을 찾을 수 없습니다: " + sessionId));
 
+        if (interview.getStatus() == InterviewStatus.FAILED) {
+            log.warn("[evaluation skipped] failed sessionId={}", sessionId);
+            return;
+        }
+
         if (interview.getMode() == InterviewMode.GROUP) {
             evaluateAllParticipants(sessionId);
             return;
@@ -179,6 +185,11 @@ public class EvaluationService {
         Interview interview = interviewRepository.findBySessionId(sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("면접 세션을 찾을 수 없습니다: " + sessionId));
 
+        if (interview.getStatus() == InterviewStatus.FAILED) {
+            log.warn("[participant evaluation skipped] failed sessionId={}", sessionId);
+            return;
+        }
+
         List<InterviewParticipant> participants =
                 participantRepository.findByInterviewOrderByJoinedAtAsc(interview);
 
@@ -199,6 +210,11 @@ public class EvaluationService {
 
         Interview interview = interviewRepository.findBySessionId(sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("면접 세션을 찾을 수 없습니다: " + sessionId));
+        if (interview.getStatus() == InterviewStatus.FAILED) {
+            log.warn("[participant evaluation skipped] failed sessionId={}, memberId={}", sessionId, memberId);
+            return;
+        }
+
         InterviewParticipant participant = participantRepository
                 .findByInterviewOrderByJoinedAtAsc(interview)
                 .stream()

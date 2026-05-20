@@ -46,9 +46,16 @@ public class FeedbackService {
             List<InterviewQna> qnas = interviewQnaRepository
                     .findByInterviewAndRespondentMemberIdOrderBySequenceNumberAsc(interview, member.getId());
 
+            if (interview.getStatus() == InterviewStatus.FAILED) {
+                return failedFeedbackResponse();
+            }
+
             if (rawFeedback == null) {
                 return FeedbackResponse.builder()
                         .success(false)
+                        .status(interview.getStatus() == InterviewStatus.COMPLETED || participant.hasLeft()
+                                ? "EVALUATING"
+                                : interview.getStatus().name())
                         .totalFeedback(interview.getStatus() == InterviewStatus.COMPLETED || participant.hasLeft()
                                 ? "AI 피드백을 생성 중입니다. 잠시 후 다시 시도해주세요."
                                 : "면접이 아직 종료되지 않았습니다.")
@@ -59,6 +66,7 @@ public class FeedbackService {
             if (qnas.isEmpty()) {
                 return FeedbackResponse.builder()
                         .success(true)
+                        .status("COMPLETED")
                         .totalFeedback(rawFeedback)
                         .overallScore(extractOverallScore(rawFeedback))
                         .competencyChart(extractChartData(rawFeedback))
@@ -73,9 +81,16 @@ public class FeedbackService {
         List<InterviewQna> qnas = interviewQnaRepository
                 .findByInterviewOrderBySequenceNumberAsc(interview);
 
+        if (interview.getStatus() == InterviewStatus.FAILED) {
+            return failedFeedbackResponse();
+        }
+
         if (rawFeedback == null) {
             return FeedbackResponse.builder()
                     .success(false)
+                    .status(interview.getStatus() == InterviewStatus.COMPLETED
+                            ? "EVALUATING"
+                            : interview.getStatus().name())
                     .totalFeedback(interview.getStatus() == InterviewStatus.COMPLETED
                             ? "AI 피드백을 생성 중입니다. 잠시 후 다시 시도해주세요."
                             : "면접이 아직 종료되지 않았습니다.")
@@ -84,6 +99,15 @@ public class FeedbackService {
         }
 
         return buildFeedbackResponse(rawFeedback, qnas);
+    }
+
+    private FeedbackResponse failedFeedbackResponse() {
+        return FeedbackResponse.builder()
+                .success(false)
+                .status("FAILED")
+                .totalFeedback("AI 면접관 연결 문제로 면접이 중단되었습니다. 새 면접을 시작해주세요.")
+                .qaPairs(List.of())
+                .build();
     }
 
     @Transactional(readOnly = true)
@@ -153,6 +177,7 @@ public class FeedbackService {
 
         return FeedbackResponse.builder()
                 .success(true)
+                .status("COMPLETED")
                 .totalFeedback(onlyFeedback)
                 .overallScore(extractOverallScore(rawFeedback))
                 .competencyChart(onlyChart)
