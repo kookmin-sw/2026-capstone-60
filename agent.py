@@ -250,25 +250,43 @@ class InterviewerAgent(Agent):
                 logger.warning("[QUESTION publish 실패] %s — 음성은 이미 전달됨, 면접 계속", e)
 
 
+    #꼬리질문 버그 수정
     async def _choose_next_question(self) -> tuple[dict[str, str], bool]:
-        """마지막 답변을 요약/판단한 뒤 FOLLOW_UP 또는 NEXT_QUESTION 으로 분기한다."""
-        last_turn = self.interview.history[-1] if self.interview.history else None
-        if not last_turn:
-            return await self._llm_service.generate_next_topic(self.interview), False
-
-        # 완전 무응답 → 요약/판단 호출 자체를 건너뜀
-        if not last_turn.answer.strip():
-            return await self._llm_service.generate_next_topic(self.interview), False
-
-        # 꼬리질문 최대 3회 제한 (같은 부모 질문에서 파생된 꼬리질문이 3개 이상이면 새 주제로)
-        if last_turn.is_follow_up:
-            parent = last_turn.parent_turn_number
-            sibling_count = sum(
-                1 for turn in self.interview.history
-                if turn.is_follow_up and turn.parent_turn_number == parent
-            )
-            if sibling_count >= 2:
+            """마지막 답변을 요약/판단한 뒤 FOLLOW_UP 또는 NEXT_QUESTION 으로 분기한다."""
+            last_turn = self.interview.history[-1] if self.interview.history else None
+            if not last_turn:
                 return await self._llm_service.generate_next_topic(self.interview), False
+
+            # 완전 무응답 → 요약/판단 호출 자체를 건너뜀
+            if not last_turn.answer.strip():
+                return await self._llm_service.generate_next_topic(self.interview), False
+
+            # 꼬리질문 최대 횟수 제한 (parent_turn_number 의존 없이 역순 탐색으로 연속 횟수 카운트)
+            if last_turn.is_follow_up:
+                consecutive_follow_ups = 0
+                for turn in reversed(self.interview.history):
+                    if getattr(turn, "is_follow_up", False):
+                        consecutive_follow_ups += 1
+                    else:
+                        # 메인 질문(Q1)을 만나면 탐색 중단
+                        break
+
+                # 연속된 꼬리질문이 설정된 횟수(예: 2회 이상 누적 시 새 주제 전환)에 도달하면 다음 주제로
+                if consecutive_follow_ups >= 2:
+                    return await self._llm_service.generate_next_topic(self.interview), False
+
+            judgment = await self._analyze_last_turn()
+            if judgment is None:
+                return await self._llm_service.generate_next_topic(self.interview), False
+
+            if judgment.decision == "FOLLOW_UP":
+                result = await self._llm_service.generate_follow_up(
+                    self.interview,
+                    judgment.focus_point,
+                )
+                return result, True
+
+            return await self._llm_service.generate_next_topic(self.interview), False
 
 
         judgment = await self._analyze_last_turn()
