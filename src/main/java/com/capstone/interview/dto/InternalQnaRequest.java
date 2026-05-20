@@ -7,6 +7,7 @@ public record InternalQnaRequest(
     String question,
     String intent,
     Boolean isFollowUp,
+    Integer parentTurnNumber,
     String answer,
     List<String> answerSummary,
     String followUpDecision,
