@@ -396,6 +396,7 @@ class InterviewerAgent(Agent):
                 answer_summary=prev_turn.answer_summary,
                 follow_up_decision=prev_turn.decision,
                 focus_point=prev_turn.focus_point,
+                parent_turn_number=prev_turn.parent_turn_number if prev_turn.is_follow_up else None,
             ))
 
         logger.info("[다음 질문] turn=%d question=%s", turn_number, result["question"])
@@ -438,6 +439,7 @@ class InterviewerAgent(Agent):
                 answer_summary=last_turn.answer_summary,
                 follow_up_decision=last_turn.decision,
                 focus_point=last_turn.focus_point,
+                parent_turn_number=last_turn.parent_turn_number if last_turn.is_follow_up else None,
             )
 
         # ③ shutdown
@@ -959,6 +961,7 @@ class GroupInterviewerAgent(Agent):
             follow_up_decision=turn.decision,
             focus_point=turn.focus_point,
             respondent_member_id=participant.member_id,
+            parent_turn_number=turn.parent_turn_number if turn.is_follow_up else None,
         )
 
 
