@@ -798,12 +798,21 @@ class GroupInterviewerAgent(Agent):
             )
             return
 
+        current_participant = None
         current_identity = None
         if self._started and self.group.active_count() > 0:
             try:
-                current_identity = self.group.current_participant().identity
+                current_participant = self.group.current_participant()
+                current_identity = current_participant.identity
             except RuntimeError:
                 current_identity = None
+
+        is_current_participant_leaving = (
+            self._started
+            and identity == current_identity
+            and current_participant is not None
+            and not self._transitioning_turn
+        )
 
         removed = self.group.mark_left(identity)
         if not removed:
@@ -816,6 +825,21 @@ class GroupInterviewerAgent(Agent):
             "[GROUP participant left] identity=%s active=%d", identity, self.group.active_count()
         )
 
+        if is_current_participant_leaving:
+            self._transitioning_turn = True
+            await asyncio.sleep(STT_DRAIN_DELAY_SECONDS)
+            interview = current_participant.interview
+            answer = interview.flush_buffer()
+            interview.add_answer(answer)
+            last_turn = interview.history[-1] if interview.history else None
+            if last_turn:
+                await self._save_participant_qna(current_participant, last_turn)
+            logger.info(
+                "[GROUP participant left answer saved] identity=%s answer_len=%d",
+                identity,
+                len(answer),
+            )
+
         if self.group.active_count() == 0:
             logger.info(
                 "[GROUP participant left] no active participants; shutdown session=%s",
@@ -827,8 +851,7 @@ class GroupInterviewerAgent(Agent):
                 pass
             return
 
-        if self._started and identity == current_identity and not self._transitioning_turn:
-            self._transitioning_turn = True
+        if is_current_participant_leaving:
             self.group.follow_up_active = False
             await self._ask_current_participant(
                 turn_number=self.group.current_turn_number,
