@@ -14,11 +14,14 @@ const DEFAULT_SCORE = 3;
 export default function CompetencyRadarChart({ chartData }) {
   if (!chartData || Object.keys(chartData).length === 0) return null;
 
-  const data = ALL_TYPES.map((subject) => ({
-    subject,
-    value: chartData[subject] != null ? Number(chartData[subject]) : DEFAULT_SCORE,
-    fullMark: 10,
-  }));
+  const data = ALL_TYPES.map((subject) => {
+    const raw = chartData[subject] != null ? Number(chartData[subject]) : DEFAULT_SCORE;
+    return {
+      subject,
+      value: raw > 0 ? raw : DEFAULT_SCORE,
+      fullMark: 10,
+    };
+  });
 
   return (
     <div>
