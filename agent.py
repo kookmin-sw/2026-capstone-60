@@ -254,7 +254,7 @@ class InterviewerAgent(Agent):
                 1 for turn in self.interview.history
                 if turn.is_follow_up and turn.parent_turn_number == parent
             )
-            if sibling_count >= 3:
+            if sibling_count >= 2:
                 return await self._llm_service.generate_next_topic(self.interview), False
 
 
