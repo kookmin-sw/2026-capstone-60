@@ -152,6 +152,8 @@ class InterviewerAgent(Agent):
                 pass
 
             await self.session.say(text)
+        except RuntimeError as e:
+            logger.warning("[TTS skipped] session is not active: %s", e)
         finally:
             self._speaking = False
 
@@ -206,10 +208,10 @@ class InterviewerAgent(Agent):
             return
 
         logger.info("[첫 질문] %s", result["question"])
-        await self._say(result["question"])
 
-        # 첫 질문도 QUESTION publish (§5.4: TTS 재생 완료 후)
+        # 음성 세션이 닫혀도 화면에는 질문이 떠야 하므로 publish를 먼저 수행한다.
         await self._publish_question(result, is_follow_up=False)
+        await self._say(result["question"])
 
     async def _publish_question(self, result: dict, is_follow_up: bool) -> None:
         """QUESTION Data Message를 Room에 publish한다 (§5.4).
@@ -407,13 +409,13 @@ class InterviewerAgent(Agent):
                 ))
 
             logger.info("[다음 질문] turn=%d question=%s", turn_number, result["question"])
-            await self._say(result["question"])
 
-            # ④ QUESTION publish — TTS say()가 재생 완료까지 기다리므로 여기서 publish (§5.4)
+            # ④ QUESTION publish — 음성 실패가 화면 질문 표시를 막지 않도록 먼저 전송한다.
             # history[-1] 은 _choose_next_question() 내부 add_question() 으로 추가된 새 질문.
             # is_follow_up 은 history[-1].is_follow_up 을 직접 읽어 사용한다.
             last_added = self.interview.history[-1]
             await self._publish_question(result, is_follow_up=last_added.is_follow_up)
+            await self._say(result["question"])
         finally:
             self._transitioning_turn = False
 
@@ -573,6 +575,8 @@ class GroupInterviewerAgent(Agent):
                 pass
 
             await self.session.say(text)
+        except RuntimeError as e:
+            logger.warning("[GROUP TTS skipped] session is not active: %s", e)
         finally:
             self._speaking = False
 
@@ -718,8 +722,8 @@ class GroupInterviewerAgent(Agent):
             is_follow_up,
             result["question"],
         )
-        await self._say(result["question"])
         await self._publish_question(result, participant, turn_number, is_follow_up)
+        await self._say(result["question"])
         self._transitioning_turn = False
 
     async def _wait_for_group_participants(self) -> None:
