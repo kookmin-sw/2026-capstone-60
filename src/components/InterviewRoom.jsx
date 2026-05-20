@@ -88,12 +88,12 @@ export default function InterviewRoom({
   }, [session.livekit?.isMock]);
 
   const syncMicPublishForTarget = useCallback(async (nextTargetIdentity) => {
-    if (!isGroup || !nextTargetIdentity) {
+    if (!isGroup) {
       await setLocalMicPublish(true);
       return;
     }
 
-    await setLocalMicPublish(nextTargetIdentity === myIdentityRef.current);
+    await setLocalMicPublish(Boolean(nextTargetIdentity) && nextTargetIdentity === myIdentityRef.current);
   }, [isGroup, setLocalMicPublish]);
 
   function addLog(type, text) {
@@ -155,6 +155,7 @@ export default function InterviewRoom({
       if (msg.type === "NEXT") {
         const { turnNumber } = msg.payload || {};
         if (typeof turnNumber === "number") updateTurn(turnNumber);
+        void setLocalMicPublish(false);
         setCurrentQuestion("");
         setWaitingForAgent(false);
         setAgentTimedOut(false);
@@ -200,7 +201,7 @@ export default function InterviewRoom({
     } catch (e) {
       // 파싱 실패 시 무시
     }
-  }, [answerTimeLimitSeconds, syncMicPublishForTarget, updateTurn, myIdentity]);
+  }, [answerTimeLimitSeconds, syncMicPublishForTarget, updateTurn, myIdentity, setLocalMicPublish]);
 
   useEffect(() => {
     if (session.livekit?.isMock) {
@@ -287,6 +288,7 @@ export default function InterviewRoom({
     if (!currentQuestion || !isMyActiveTurn || !canAskNextQuestion || ending) return;
     if (!nextGuard.tryAcquire()) return;
     setNextLoading(true);
+    await setLocalMicPublish(false);
     setCurrentTurnRole("ai");
     // 다음 질문이 발화될 때까지 화면을 "대기" 상태로 (질문 텍스트 비우고 타이머 --:--)
     setCurrentQuestion("");
@@ -362,7 +364,7 @@ export default function InterviewRoom({
   const toggleMic = async () => {
     if (session.livekit?.isMock) { setIsMicOn((prev) => !prev); return; }
     if (!roomRef.current) return;
-    if (isGroup && targetIdentity && targetIdentity !== myIdentity) {
+    if (isGroup && (!targetIdentity || targetIdentity !== myIdentity || !currentQuestion || currentTurnRole !== "user")) {
       await setLocalMicPublish(false);
       return;
     }
@@ -467,7 +469,10 @@ export default function InterviewRoom({
       errorMessage=""
 
       isMicOn={isMicOn}
-      isMicToggleDisabled={Boolean(isGroup && targetIdentity && targetIdentity !== myIdentity)}
+      isMicToggleDisabled={Boolean(
+        isGroup &&
+        (!targetIdentity || targetIdentity !== myIdentity || !currentQuestion || currentTurnRole !== "user")
+      )}
       onToggleMic={toggleMic}
       onNextQuestion={requestNextQuestion}
       onEndInterview={endInterview}
