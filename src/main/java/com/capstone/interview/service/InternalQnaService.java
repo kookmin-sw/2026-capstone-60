@@ -51,6 +51,11 @@ public class InternalQnaService {
                         request.isFollowUp() != null && request.isFollowUp()
                 );
             }
+            // parent 설정 (업데이트 시에도 반영)
+            InterviewQna parent = resolveParent(interview, request);
+            if (parent != null) {
+                existing.setParent(parent);
+            }
             if (request.answer() != null) {
                 existing.updateAnswer(request.answer());
             }

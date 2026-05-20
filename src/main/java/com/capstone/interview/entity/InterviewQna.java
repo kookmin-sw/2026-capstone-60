@@ -104,6 +104,10 @@ public class InterviewQna {
         this.respondentMemberId = respondentMemberId;
     }
 
+    public void setParent(InterviewQna parent) {
+        this.parent = parent;
+    }
+
     public void updateAnswer(String answerContent) {
         this.answerContent = answerContent;
     }
