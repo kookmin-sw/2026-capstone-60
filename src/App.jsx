@@ -264,13 +264,19 @@ export default function App() {
   };
 
   const leaveSession = useCallback(
-    async () => {
+    async (options = {}) => {
       if (!session?.sessionId || ending) return;
       try {
         setEnding(true);
         setError("");
         await leaveInterviewSession(session.sessionId);
         setSession(null);
+        if (options.showHistoryHint) {
+          sessionStorage.setItem(
+            "groupLeaveNotice",
+            "호스트가 면접을 종료하면 「면접 기록」에서 본인 피드백을 확인할 수 있습니다."
+          );
+        }
         navigate(ROUTE.HOME);
       } catch (leaveError) {
         setError(leaveError.message);
@@ -279,6 +285,15 @@ export default function App() {
       }
     },
     [ending, navigate, session?.sessionId]
+  );
+
+  const handleGuestFeedbackReady = useCallback(
+    (feedbackData) => {
+      setResult(feedbackData);
+      setSession((prev) => (prev ? { ...prev, status: "COMPLETED" } : prev));
+      navigate(ROUTE.RESULT);
+    },
+    [navigate]
   );
 
   const endSession = useCallback(
@@ -531,7 +546,8 @@ export default function App() {
               <InterviewRoom
                 session={session}
                 onSessionEnd={endSession}
-                onSessionLeave={leaveSession}
+                onSessionLeave={() => leaveSession({ showHistoryHint: true })}
+                onGuestFeedbackReady={handleGuestFeedbackReady}
                 ending={ending}
               />
             ) : (

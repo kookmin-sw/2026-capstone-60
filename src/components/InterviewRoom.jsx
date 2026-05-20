@@ -13,7 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Room, RoomEvent } from "livekit-client";
 import useCountdown from "../hooks/useCountdown";
 import useNextQuestionGuard from "../hooks/useNextQuestionGuard";
-import { nextQuestion } from "../api/interviewApi";
+import { getInterviewResult, nextQuestion } from "../api/interviewApi";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import InterviewRoomView from "./InterviewRoomView";
@@ -26,7 +26,13 @@ const EXPIRES_AT_FALLBACK_THRESHOLD_MS = 5000;
 // 화면에 표시하지 않는 로그 타입 (시스템 메시지 등)
 const HIDDEN_LOG_TYPES = new Set(["SYSTEM"]);
 
-export default function InterviewRoom({ session, onSessionEnd, onSessionLeave, ending }) {
+export default function InterviewRoom({
+  session,
+  onSessionEnd,
+  onSessionLeave,
+  onGuestFeedbackReady,
+  ending,
+}) {
   const roomRef = useRef(null);
   const myIdentityRef = useRef("");
   const [isConnected, setIsConnected] = useState(false);
@@ -275,7 +281,10 @@ export default function InterviewRoom({ session, onSessionEnd, onSessionLeave, e
     return () => clearTimeout(timeout);
   }, [isConnected, waitingForAgent, session.livekit?.isMock]);
 
+  const isHost = session.role === "HOST";
+
   const requestNextQuestion = async () => {
+    if (isGroup && !isHost) return;
     if (!currentQuestion || !isMyActiveTurn || !canAskNextQuestion || ending) return;
     if (!nextGuard.tryAcquire()) return;
     setNextLoading(true);
@@ -320,8 +329,6 @@ export default function InterviewRoom({ session, onSessionEnd, onSessionLeave, e
     }
   };
 
-  const isHost = session.role === "HOST";
-
   useEffect(() => {
     if (!canAskNextQuestion && answerTimer.secondsLeft === 0 && !ending) {
       if (isGroup && !isHost) {
@@ -333,6 +340,30 @@ export default function InterviewRoom({ session, onSessionEnd, onSessionLeave, e
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canAskNextQuestion, answerTimer.secondsLeft, ending, isGroup, isHost]);
+
+  // 게스트: 호스트가 면접 종료·평가 후 본인 피드백 자동 수신
+  useEffect(() => {
+    if (!isGroup || isHost || !session?.sessionId || !onGuestFeedbackReady) return undefined;
+
+    let disposed = false;
+    const poll = async () => {
+      try {
+        const response = await getInterviewResult(session.sessionId);
+        if (disposed || response?.pending || !response?.data) return;
+        roomRef.current?.disconnect();
+        onGuestFeedbackReady(response.data);
+      } catch {
+        // 평가 전 — 무시하고 재시도
+      }
+    };
+
+    const intervalId = window.setInterval(poll, 8000);
+    poll();
+    return () => {
+      disposed = true;
+      window.clearInterval(intervalId);
+    };
+  }, [isGroup, isHost, session?.sessionId, onGuestFeedbackReady]);
 
   const toggleMic = async () => {
     if (session.livekit?.isMock) { setIsMicOn((prev) => !prev); return; }
@@ -346,11 +377,29 @@ export default function InterviewRoom({ session, onSessionEnd, onSessionLeave, e
   };
 
   const endInterview = async () => {
-    if (isGroup) {
-      await onSessionLeave?.();
+    if (isGroup && isHost) {
+      const ok = window.confirm(
+        "면접을 종료하면 모든 참가자의 평가가 시작됩니다. 종료하시겠습니까?"
+      );
+      if (!ok) return;
       roomRef.current?.disconnect();
+      await onSessionEnd("USER_STOP");
       return;
     }
+
+    if (isGroup && !isHost) {
+      const ok = window.confirm(
+        "지금 나가면 실시간 결과 화면으로 이동하지 않습니다.\n" +
+          "호스트가 면접을 종료한 뒤 「면접 기록」에서 본인 피드백을 확인할 수 있습니다.\n" +
+          "그래도 나가시겠습니까?"
+      );
+      if (!ok) return;
+      roomRef.current?.disconnect();
+      await onSessionLeave?.();
+      return;
+    }
+
+    roomRef.current?.disconnect();
     await onSessionEnd("USER_STOP");
   };
 
@@ -428,7 +477,13 @@ export default function InterviewRoom({ session, onSessionEnd, onSessionLeave, e
       onToggleMic={toggleMic}
       onNextQuestion={requestNextQuestion}
       onEndInterview={endInterview}
-      canAskNext={Boolean(currentQuestion) && isMyActiveTurn && canAskNextQuestion}
+      isHost={isHost}
+      canAskNext={
+        Boolean(currentQuestion) &&
+        isMyActiveTurn &&
+        canAskNextQuestion &&
+        (!isGroup || isHost)
+      }
       targetIdentity={targetIdentity}
       myIdentity={myIdentity}
       isGroup={isGroup}

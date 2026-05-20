@@ -80,6 +80,7 @@ export default function InterviewRoomView({
   targetIdentity = null,
   myIdentity = null,
   isGroup = false,
+  isHost = true,
 }) {
   const turnHint = isGroup && targetIdentity
     ? (targetIdentity === myIdentity ? "지금 답변할 차례입니다" : `답변 차례: ${targetIdentity}`)
@@ -405,7 +406,9 @@ export default function InterviewRoomView({
             ) : (
               <>
                 <Square className="size-4 fill-current" />
-                <span className="text-sm">{isGroup ? "나가기" : "면접 종료"}</span>
+                <span className="text-sm">
+                  {isGroup && !isHost ? "나가기" : "면접 종료"}
+                </span>
               </>
             )}
           </Button>
@@ -453,25 +456,27 @@ export default function InterviewRoomView({
             </Button>
           </div>
 
-          {/* Next Question */}
-          <Button
-            variant="ghost"
-            onClick={onNextQuestion}
-            disabled={!canAskNext || nextLoading || ending}
-            className="rounded-xl px-8 h-14 text-slate-700 hover:bg-slate-100 gap-2 font-medium"
-          >
-            {nextLoading ? (
-              <>
-                <span className="w-4 h-4 border-2 border-slate-300 border-t-blue-600 rounded-full animate-spin" />
-                <span className="text-sm">요청 중</span>
-              </>
-            ) : (
-              <>
-                <span className="text-sm">다음 질문</span>
-                <ChevronRight className="size-4" />
-              </>
-            )}
-          </Button>
+          {/* Next Question — 그룹 면접은 호스트만 */}
+          {(!isGroup || isHost) && (
+            <Button
+              variant="ghost"
+              onClick={onNextQuestion}
+              disabled={!canAskNext || nextLoading || ending}
+              className="rounded-xl px-8 h-14 text-slate-700 hover:bg-slate-100 gap-2 font-medium"
+            >
+              {nextLoading ? (
+                <>
+                  <span className="w-4 h-4 border-2 border-slate-300 border-t-blue-600 rounded-full animate-spin" />
+                  <span className="text-sm">요청 중</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-sm">다음 질문</span>
+                  <ChevronRight className="size-4" />
+                </>
+              )}
+            </Button>
+          )}
         </div>
       </motion.div>
     </div>
