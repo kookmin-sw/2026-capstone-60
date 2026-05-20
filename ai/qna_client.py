@@ -102,3 +102,42 @@ async def save_qna(
         session_id, turn_number,
     )
     return False
+
+
+async def update_current_speaker(
+    session_id: str,
+    turn_number: int,
+    member_id: int,
+    identity: str,
+) -> bool:
+    """Tell Backend which participant owns the current turn."""
+    url = f"{BACKEND_INTERNAL_URL}/internal/v1/interviews/sessions/{session_id}/speaker"
+    payload = {
+        "turnNumber": turn_number,
+        "memberId": member_id,
+        "identity": identity,
+    }
+    headers = {"Content-Type": "application/json"}
+    if SERVICE_TOKEN:
+        headers["X-Service-Token"] = SERVICE_TOKEN
+
+    try:
+        async with aiohttp.ClientSession() as client:
+            async with client.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    logger.info(
+                        "[Current speaker 저장 성공] session=%s turn=%d identity=%s",
+                        session_id, turn_number, identity,
+                    )
+                    return True
+                body = await resp.text()
+                logger.warning(
+                    "[Current speaker 저장 실패] session=%s turn=%d status=%d body=%s",
+                    session_id, turn_number, resp.status, body[:200],
+                )
+    except Exception as e:
+        logger.warning(
+            "[Current speaker 저장 예외] session=%s turn=%d identity=%s error=%s",
+            session_id, turn_number, identity, e,
+        )
+    return False
