@@ -44,6 +44,7 @@ async def save_qna(
     follow_up_decision: Optional[str] = None,
     focus_point: Optional[str] = None,
     respondent_member_id: Optional[int] = None,
+    parent_turn_number: Optional[int] = None,
 ) -> bool:
     """
     단건 QnA를 Backend에 저장한다.
@@ -60,6 +61,7 @@ async def save_qna(
         "question": question,
         "intent": question_types,
         "isFollowUp": is_follow_up,
+        "parentTurnNumber": parent_turn_number,
         "answer": answer,
         "answerSummary": answer_summary,
         "followUpDecision": follow_up_decision,

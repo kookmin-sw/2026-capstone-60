@@ -40,6 +40,7 @@ from livekit.agents import (
     inference,
     llm as llm_types,
 )
+from livekit.agents import WorkerOptions
 from livekit.plugins import silero
 
 from ai.llm_service import LLMService, MockLLMService, create_llm_service
@@ -158,7 +159,6 @@ class InterviewerAgent(Agent):
         """Room 입장 직후: STT 버퍼링 등록 → Data Message 핸들러 등록 → 첫 질문 발화."""
 
         # ── STT 버퍼링 (§5.3.1) ──
-        # VAD 기반 자동 턴 종료를 끈 상태이므로 STT 결과를 Agent가 직접 모아둔다.
         @self.session.on("user_input_transcribed")
         def _on_user_transcribed(ev):
             if self._speaking:
@@ -211,86 +211,98 @@ class InterviewerAgent(Agent):
         # 첫 질문도 QUESTION publish (§5.4: TTS 재생 완료 후)
         await self._publish_question(result, is_follow_up=False)
 
-    # 꼬리질문 부모-자식 버그 수정
     async def _publish_question(self, result: dict, is_follow_up: bool) -> None:
-            """QUESTION Data Message를 Room에 publish한다 (§5.4)."""
-            try:
-                history = self.interview.history
+        """QUESTION Data Message를 Room에 publish한다 (§5.4).
 
-                # ── 족보(Parent) 역순 추적 로직 ──
-                parent_turn_number = 0
-                if is_follow_up and history:
-                    # 대화 기록을 뒤에서부터 역순으로 훑습니다.
-                    for idx, turn in enumerate(reversed(history)):
-                        # 역순 인덱스(idx)를 원래 history의 진짜 인덱스로 변환합니다.
-                        real_idx = len(history) - 1 - idx
+        parent 탐색 규칙:
+        - history[-1] 이 방금 add_question() 으로 추가된 새 질문이므로,
+          history[:-1] 범위에서 역순으로 첫 번째 메인 질문(is_follow_up=False)을 찾는다.
+        - turn_number 는 history 인덱스+1 이 아니라 ConversationTurn.turn_number 를
+          직접 사용한다 (그룹 면접에서 turn_number 가 history 인덱스와 다를 수 있음).
+        """
+        try:
+            history = self.interview.history
 
-                        # 꼬리질문이 아닌 최초의 '메인 질문'을 찾았다면!
-                        if not turn.is_follow_up:
-                            # 해당 질문의 턴 번호(인덱스 + 1)를 부모 번호로 확정합니다.
-                            parent_turn_number = real_idx + 1
-                            break
-
-                payload = {
-                    "type": "QUESTION",
-                    "payload": {
-                        "turnNumber": len(history) + 1,  # 새로 나갈 질문의 턴 번호
-                        "text": result["question"],
-                        "intent": result.get("question_types", ""),
-                        "isFollowUp": is_follow_up,
-                        "parentTurnNumber": parent_turn_number,  # 추적한 올바른 부모 번호 주입
-                    },
-                }
-                await self.session.room_io.room.local_participant.publish_data(
-                    payload=json.dumps(payload).encode("utf-8"),
-                    reliable=True,
-                    topic="interview",
-                )
-                logger.info("[QUESTION publish] turn=%d parent=%d", len(history) + 1, parent_turn_number)
-            except Exception as e:
-                logger.warning("[QUESTION publish 실패] %s — 음성은 이미 전달됨, 면접 계속", e)
-
-
-    #꼬리질문 버그 수정
-    async def _choose_next_question(self) -> tuple[dict[str, str], bool]:
-            """마지막 답변을 요약/판단한 뒤 FOLLOW_UP 또는 NEXT_QUESTION 으로 분기한다."""
-            last_turn = self.interview.history[-1] if self.interview.history else None
-            if not last_turn:
-                return await self._llm_service.generate_next_topic(self.interview), False
-
-            # 완전 무응답 → 요약/판단 호출 자체를 건너뜀
-            if not last_turn.answer.strip():
-                return await self._llm_service.generate_next_topic(self.interview), False
-
-            # 꼬리질문 최대 횟수 제한 (parent_turn_number 의존 없이 역순 탐색으로 연속 횟수 카운트)
-            if last_turn.is_follow_up:
-                consecutive_follow_ups = 0
-                for turn in reversed(self.interview.history):
-                    if getattr(turn, "is_follow_up", False):
-                        consecutive_follow_ups += 1
-                    else:
-                        # 메인 질문(Q1)을 만나면 탐색 중단
+            parent_turn_number = 0
+            if is_follow_up and len(history) >= 2:
+                # 방금 추가된 새 질문(history[-1])을 제외하고 역순 탐색
+                for turn in reversed(history[:-1]):
+                    if not turn.is_follow_up:
+                        parent_turn_number = turn.turn_number
                         break
 
-                # 연속된 꼬리질문이 설정된 횟수(예: 2회 이상 누적 시 새 주제 전환)에 도달하면 다음 주제로
-                if consecutive_follow_ups >= 2:
-                    return await self._llm_service.generate_next_topic(self.interview), False
+            payload = {
+                "type": "QUESTION",
+                "payload": {
+                    "turnNumber": len(history),
+                    "text": result["question"],
+                    "intent": result.get("question_types", ""),
+                    "isFollowUp": is_follow_up,
+                    "parentTurnNumber": parent_turn_number,
+                },
+            }
+            await self.session.room_io.room.local_participant.publish_data(
+                payload=json.dumps(payload).encode("utf-8"),
+                reliable=True,
+                topic="interview",
+            )
+            logger.info(
+                "[QUESTION publish] turn=%d isFollowUp=%s parent=%d",
+                len(history),
+                is_follow_up,
+                parent_turn_number,
+            )
+        except Exception as e:
+            logger.warning("[QUESTION publish 실패] %s — 음성은 이미 전달됨, 면접 계속", e)
 
-            judgment = await self._analyze_last_turn()
-            if judgment is None:
-                return await self._llm_service.generate_next_topic(self.interview), False
+    async def _choose_next_question(self) -> tuple[dict[str, str], bool]:
+        """마지막 답변을 요약/판단한 뒤 FOLLOW_UP 또는 NEXT_QUESTION 으로 분기한다.
 
-            if judgment.decision == "FOLLOW_UP":
-                result = await self._llm_service.generate_follow_up(
-                    self.interview,
-                    judgment.focus_point,
-                )
-                return result, True
-
+        꼬리질문 횟수 제한(consecutive_follow_ups >= 2)에 걸려
+        generate_next_topic() 을 호출하는 경우에도 _analyze_last_turn() 은
+        반드시 먼저 실행한다. 이렇게 해야:
+          1. answer_summary / decision / focus_point 가 DB 에 저장되고
+          2. [answer analysis] 로그가 남아 디버깅이 가능하다.
+        """
+        last_turn = self.interview.history[-1] if self.interview.history else None
+        if not last_turn:
             return await self._llm_service.generate_next_topic(self.interview), False
 
+        # 완전 무응답 → 요약/판단 호출 자체를 건너뜀
+        if not last_turn.answer.strip():
+            return await self._llm_service.generate_next_topic(self.interview), False
+
+        # 꼬리질문 횟수와 무관하게 항상 분석 먼저 실행
+        judgment = await self._analyze_last_turn()
+
+        # 꼬리질문 최대 횟수 제한: 역순 탐색으로 연속 횟수 카운트
+        if last_turn.is_follow_up:
+            consecutive_follow_ups = 0
+            for turn in reversed(self.interview.history):
+                if getattr(turn, "is_follow_up", False):
+                    consecutive_follow_ups += 1
+                else:
+                    break
+            logger.info("[choose_next] consecutive_follow_ups=%d", consecutive_follow_ups)
+
+            if consecutive_follow_ups >= 2:
+                # 횟수 초과 → 새 주제로 강제 전환
+                return await self._llm_service.generate_next_topic(self.interview), False
+
+        if judgment is None:
+            return await self._llm_service.generate_next_topic(self.interview), False
+
+        if judgment.decision == "FOLLOW_UP":
+            result = await self._llm_service.generate_follow_up(
+                self.interview,
+                judgment.focus_point,
+            )
+            return result, True
+
+        return await self._llm_service.generate_next_topic(self.interview), False
+
     async def _analyze_last_turn(self):
-        """Analyze and cache the latest answer. Returns None if analysis fails."""
+        """마지막 답변을 분석하고 결과를 캐싱한다. 실패 시 None 반환."""
         try:
             judgment = await self._llm_service.analyze_last_answer(self.interview)
             self.interview.set_last_turn_analysis(
@@ -331,16 +343,17 @@ class InterviewerAgent(Agent):
             answer = self.interview.flush_buffer()
 
             # 질문 반복 요청 감지 → 현재 질문을 다시 발화하고 턴 진행하지 않음
-            repeat_keywords = ("다시", "한번 더", "못 들었", "다시 한번", "뭐라고", "한 번 더",
-                               "듣고싶", "듣고 싶", "다시 들", "한번만 더", "다시요", "뭐라고요")
+            repeat_keywords = (
+                "다시", "한번 더", "못 들었", "다시 한번", "뭐라고", "한 번 더",
+                "듣고싶", "듣고 싶", "다시 들", "한번만 더", "다시요", "뭐라고요",
+            )
             if answer.strip() and any(kw in answer for kw in repeat_keywords) and len(answer.strip()) < 30:
                 last_turn = self.interview.history[-1] if self.interview.history else None
                 if last_turn:
                     logger.info("[질문 반복 요청] answer=%s", answer.strip())
                     await self._say(last_turn.question)
-                    # 같은 턴 번호로 QUESTION publish → 프론트가 턴을 올리지 않도록
                     try:
-                        payload = {
+                        repeat_payload = {
                             "type": "QUESTION",
                             "payload": {
                                 "turnNumber": len(self.interview.history),
@@ -352,7 +365,7 @@ class InterviewerAgent(Agent):
                             },
                         }
                         await self.session.room_io.room.local_participant.publish_data(
-                            payload=json.dumps(payload).encode("utf-8"),
+                            payload=json.dumps(repeat_payload).encode("utf-8"),
                             reliable=True,
                             topic="interview",
                         )
@@ -363,7 +376,7 @@ class InterviewerAgent(Agent):
             self.interview.add_answer(answer)
             logger.info("[답변 확정] turn=%d answer_len=%d", turn_number - 1, len(answer))
 
-            # ② QnA 저장 — fire-and-forget (§5.5)
+            # ② 직전 턴 참조 (QnA 저장용 — ③ 이후에 fire-and-forget)
             prev_turn = self.interview.history[-1] if self.interview.history else None
             prev_turn_number = len(self.interview.history)
 
@@ -377,7 +390,8 @@ class InterviewerAgent(Agent):
                 )
                 return
 
-            # Store after analysis so answer_summary/decision/focus_point are included.
+            # answer_summary / decision / focus_point 가 set_last_turn_analysis() 로
+            # 채워진 뒤에 저장해야 하므로 _choose_next_question() 완료 후 fire-and-forget
             if prev_turn:
                 asyncio.create_task(save_qna(
                     session_id=self.interview.session_id,
@@ -389,13 +403,17 @@ class InterviewerAgent(Agent):
                     answer_summary=prev_turn.answer_summary,
                     follow_up_decision=prev_turn.decision,
                     focus_point=prev_turn.focus_point,
+                    parent_turn_number=prev_turn.parent_turn_number if prev_turn.is_follow_up else None,
                 ))
 
             logger.info("[다음 질문] turn=%d question=%s", turn_number, result["question"])
             await self._say(result["question"])
 
             # ④ QUESTION publish — TTS say()가 재생 완료까지 기다리므로 여기서 publish (§5.4)
-            await self._publish_question(result, is_follow_up=is_follow_up)
+            # history[-1] 은 _choose_next_question() 내부 add_question() 으로 추가된 새 질문.
+            # is_follow_up 은 history[-1].is_follow_up 을 직접 읽어 사용한다.
+            last_added = self.interview.history[-1]
+            await self._publish_question(result, is_follow_up=last_added.is_follow_up)
         finally:
             self._transitioning_turn = False
 
@@ -430,11 +448,15 @@ class InterviewerAgent(Agent):
                 answer_summary=last_turn.answer_summary,
                 follow_up_decision=last_turn.decision,
                 focus_point=last_turn.focus_point,
+                parent_turn_number=last_turn.parent_turn_number if last_turn.is_follow_up else None,
             )
 
         # ③ shutdown
-        logger.info("[면접 종료] session=%s total_turns=%d",
-                    self.interview.session_id, len(self.interview.history))
+        logger.info(
+            "[면접 종료] session=%s total_turns=%d",
+            self.interview.session_id,
+            len(self.interview.history),
+        )
         try:
             self.session.shutdown()
         except RuntimeError:
@@ -448,7 +470,6 @@ class InterviewerAgent(Agent):
     ) -> AsyncIterable[str]:
         """
         기본 LLM 노드 오버라이드.
-        사용자 답변이 끝날 때마다 호출된다.
 
         NOTE: 턴 전환은 이제 Backend의 NEXT Data Message로 제어된다.
         이 메서드는 VAD 기반 자동 턴 종료가 비활성화된 상태에서는
@@ -477,6 +498,10 @@ class InterviewerAgent(Agent):
         logger.info("[다음 질문] %s", result["question"])
         yield result["question"]
 
+
+# ─────────────────────────────────────────────────────────
+# 그룹 면접 Agent
+# ─────────────────────────────────────────────────────────
 
 class GroupInterviewerAgent(Agent):
     """
@@ -720,63 +745,70 @@ class GroupInterviewerAgent(Agent):
 
             await asyncio.sleep(0.2)
 
-    #그룹면접 꼬리질문 수정
     async def _publish_question(
-            self,
-            result: dict,
-            participant: ParticipantInterviewSession,
-            turn_number: int,
-            is_follow_up: bool,
-        ) -> None:
-            try:
-                await update_current_speaker(
-                    session_id=self.group.session_id,
-                    turn_number=turn_number,
-                    member_id=participant.member_id,
-                    identity=participant.identity,
-                )
+        self,
+        result: dict,
+        participant: ParticipantInterviewSession,
+        turn_number: int,
+        is_follow_up: bool,
+    ) -> None:
+        """GROUP QUESTION Data Message를 Room에 publish한다.
 
-                # ── 그룹 면접 족보(Parent) 역순 추적 로직 ──
-                parent_turn_number = 0
-                history = participant.interview.history
-                if is_follow_up and history:
-                    # 이 참가자의 대화 기록을 뒤에서부터 역순으로 훑습니다.
-                    for turn in reversed(history):
-                        if not getattr(turn, "is_follow_up", False):
-                            # 메인 질문 오브젝트가 가지고 있는 고유 turn_number를 가져옵니다.
-                            parent_turn_number = getattr(turn, "turn_number", 0)
-                            break
+        parent 탐색 규칙:
+        - _ask_current_participant() 에서 interview.history[-1].turn_number = turn_number
+          로 덮어쓴 뒤 이 메서드가 호출된다.
+        - history[-1] 이 방금 추가된 새 질문이므로 history[:-1] 에서 역순 탐색한다.
+        - ConversationTurn.turn_number 를 직접 사용한다.
+        """
+        try:
+            await update_current_speaker(
+                session_id=self.group.session_id,
+                turn_number=turn_number,
+                member_id=participant.member_id,
+                identity=participant.identity,
+            )
 
-                payload = {
-                    "type": "QUESTION",
-                    "payload": {
-                        "turnNumber": turn_number,
-                        "text": result["question"],
-                        "intent": result.get("intent", ""),
-                        "isFollowUp": is_follow_up,
-                        "parentTurnNumber": parent_turn_number,  # 누락되었던 필드 추가 및 데이터 주입
-                        "targetIdentity": participant.identity,
-                    },
-                }
-                await self.session.room_io.room.local_participant.publish_data(
-                    payload=json.dumps(payload).encode("utf-8"),
-                    reliable=True,
-                    topic="interview",
-                )
-                logger.info(
-                    "[GROUP QUESTION publish] turn=%d parent=%d target=%s",
-                    turn_number,
-                    parent_turn_number,
-                    participant.identity,
-                )
-            except Exception as e:
-                logger.warning("[GROUP QUESTION publish 실패] %s — 면접 계속", e)
+            parent_turn_number = 0
+            history = participant.interview.history
+            if is_follow_up and len(history) >= 2:
+                # 방금 추가된 새 질문(history[-1])을 제외하고 역순 탐색
+                for turn in reversed(history[:-1]):
+                    if not getattr(turn, "is_follow_up", False):
+                        parent_turn_number = getattr(turn, "turn_number", 0)
+                        break
 
+            payload = {
+                "type": "QUESTION",
+                "payload": {
+                    "turnNumber": turn_number,
+                    "text": result["question"],
+                    "intent": result.get("question_types", ""),
+                    "isFollowUp": is_follow_up,
+                    "parentTurnNumber": parent_turn_number,
+                    "targetIdentity": participant.identity,
+                },
+            }
+            await self.session.room_io.room.local_participant.publish_data(
+                payload=json.dumps(payload).encode("utf-8"),
+                reliable=True,
+                topic="interview",
+            )
+            logger.info(
+                "[GROUP QUESTION publish] turn=%d isFollowUp=%s parent=%d target=%s",
+                turn_number,
+                is_follow_up,
+                parent_turn_number,
+                participant.identity,
+            )
+        except Exception as e:
+            logger.warning("[GROUP QUESTION publish 실패] %s — 면접 계속", e)
 
     async def _handle_participant_left(self, payload: dict) -> None:
         identity = payload.get("identity")
         if not identity:
-            logger.warning("[GROUP PARTICIPANT_LEFT ignored] missing identity payload=%s", payload)
+            logger.warning(
+                "[GROUP PARTICIPANT_LEFT ignored] missing identity payload=%s", payload
+            )
             return
 
         current_identity = None
@@ -788,13 +820,20 @@ class GroupInterviewerAgent(Agent):
 
         removed = self.group.mark_left(identity)
         if not removed:
-            logger.info("[GROUP PARTICIPANT_LEFT ignored] unknown/already-left identity=%s", identity)
+            logger.info(
+                "[GROUP PARTICIPANT_LEFT ignored] unknown/already-left identity=%s", identity
+            )
             return
 
-        logger.info("[GROUP participant left] identity=%s active=%d", identity, self.group.active_count())
+        logger.info(
+            "[GROUP participant left] identity=%s active=%d", identity, self.group.active_count()
+        )
 
         if self.group.active_count() == 0:
-            logger.info("[GROUP participant left] no active participants; shutdown session=%s", self.group.session_id)
+            logger.info(
+                "[GROUP participant left] no active participants; shutdown session=%s",
+                self.group.session_id,
+            )
             try:
                 self.session.shutdown()
             except RuntimeError:
@@ -935,8 +974,13 @@ class GroupInterviewerAgent(Agent):
             follow_up_decision=turn.decision,
             focus_point=turn.focus_point,
             respondent_member_id=participant.member_id,
+            parent_turn_number=turn.parent_turn_number if turn.is_follow_up else None,
         )
 
+
+# ─────────────────────────────────────────────────────────
+# 유틸
+# ─────────────────────────────────────────────────────────
 
 def _extract_last_user_text(chat_ctx: llm_types.ChatContext) -> str:
     """ChatContext 에서 가장 최근 user 메시지의 텍스트를 반환."""
@@ -945,8 +989,6 @@ def _extract_last_user_text(chat_ctx: llm_types.ChatContext) -> str:
             return item.text_content or ""
     return ""
 
-
-from livekit.agents import WorkerOptions
 
 def _create_turn_handling_options() -> TurnHandlingOptions:
     base = {"endpointing": {"min_delay": 3600.0, "max_delay": 3600.0}}
@@ -958,6 +1000,7 @@ def _create_turn_handling_options() -> TurnHandlingOptions:
         except TypeError:
             pass
     return TurnHandlingOptions(**base)
+
 
 # ─────────────────────────────────────────────────────────
 # Worker 정의

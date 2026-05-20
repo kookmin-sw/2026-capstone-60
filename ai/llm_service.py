@@ -88,7 +88,12 @@ class LLMService:
             messages=[{"role": "user", "content": [{"text": prompt}]}],
         )
 
-        session.add_question(result["question"], is_follow_up=False, question_types=result["question_types"], turn_number=len(session.history) + 1)
+        session.add_question(
+            result["question"],
+            is_follow_up=False,
+            question_types=result["question_types"],
+            turn_number=len(session.history) + 1,
+        )
         return result
 
     async def analyze_last_answer(self, session: InterviewSession) -> AnswerJudgment:
@@ -103,10 +108,20 @@ class LLMService:
         summary = await asyncio.to_thread(self._summarizer.summarize, turn.answer)
         extracted_claims = summary.get("extracted_claims", [])
 
+        # 현재 주제에 대한 연속 꼬리질문 횟수 계산.
+        # history[-1]은 현재 답변 턴이므로 제외하고 그 앞을 역순 탐색한다.
+        consecutive_follow_ups = 0
+        for t in reversed(session.history[:-1]):
+            if t.is_follow_up:
+                consecutive_follow_ups += 1
+            else:
+                break
+
         prompt = ANSWER_JUDGE_PROMPT.format(
             question=turn.question,
             question_types=turn.question_types or "미분류",
             extracted_claims=_format_extracted_claims(extracted_claims),
+            consecutive_follow_ups=consecutive_follow_ups,
         )
         raw = await self._converse_text(
             system_prompt="",
@@ -116,6 +131,12 @@ class LLMService:
             max_tokens=256,
         )
         decision, focus_point = _parse_judgment_text(raw)
+        logger.info(
+            "[analyze_last_answer] consecutive_follow_ups=%d decision=%s focus_point=%s",
+            consecutive_follow_ups,
+            decision,
+            focus_point,
+        )
         return AnswerJudgment(
             extracted_claims=extracted_claims,
             decision=decision,
@@ -150,7 +171,13 @@ class LLMService:
         else:
             parent = last_turn.turn_number
 
-        session.add_question(result["question"], is_follow_up=True, question_types=result["question_types"], parent_turn_number=parent, turn_number=len(session.history) + 1)
+        session.add_question(
+            result["question"],
+            is_follow_up=True,
+            question_types=result["question_types"],
+            parent_turn_number=parent,
+            turn_number=len(session.history) + 1,
+        )
         return result
 
     async def generate_next_topic(
@@ -176,7 +203,12 @@ class LLMService:
             messages=messages,
         )
 
-        session.add_question(result["question"], is_follow_up=False, question_types=result["question_types"], turn_number=len(session.history) + 1)
+        session.add_question(
+            result["question"],
+            is_follow_up=False,
+            question_types=result["question_types"],
+            turn_number=len(session.history) + 1,
+        )
         return result
 
     # ── Private helpers ─────────────────────────────────────
@@ -343,7 +375,12 @@ class MockLLMService:
             "question": self._FIRST_QUESTIONS[0],
             "question_types": "문제해결력 (mock)",
         }
-        session.add_question(result["question"], is_follow_up=False, question_types=result["question_types"], turn_number=len(session.history) + 1)
+        session.add_question(
+            result["question"],
+            is_follow_up=False,
+            question_types=result["question_types"],
+            turn_number=len(session.history) + 1,
+        )
         return result
 
     async def generate_follow_up(
@@ -354,7 +391,7 @@ class MockLLMService:
         self._follow_idx += 1
         result = {
             "question": q,
-            "question_types": f"기술역량 (mock)",
+            "question_types": "기술역량 (mock)",
         }
         # 최종 부모 찾기
         last_turn = session.history[-1]
@@ -362,7 +399,13 @@ class MockLLMService:
             parent = last_turn.parent_turn_number
         else:
             parent = last_turn.turn_number
-        session.add_question(result["question"], is_follow_up=True, question_types=result["question_types"], parent_turn_number=parent, turn_number=len(session.history) + 1)
+        session.add_question(
+            result["question"],
+            is_follow_up=True,
+            question_types=result["question_types"],
+            parent_turn_number=parent,
+            turn_number=len(session.history) + 1,
+        )
         return result
 
     async def analyze_last_answer(self, session: InterviewSession) -> AnswerJudgment:
@@ -403,7 +446,12 @@ class MockLLMService:
         q = self._NEXT_QUESTIONS[self._next_idx % len(self._NEXT_QUESTIONS)]
         self._next_idx += 1
         result = {"question": q, "question_types": "기술역량 (mock)"}
-        session.add_question(result["question"], is_follow_up=False, question_types=result["question_types"], turn_number=len(session.history) + 1)
+        session.add_question(
+            result["question"],
+            is_follow_up=False,
+            question_types=result["question_types"],
+            turn_number=len(session.history) + 1,
+        )
         return result
 
 
