@@ -12,12 +12,23 @@ import asyncio
 import json
 import logging
 import os
+import re
+from dataclasses import dataclass
 from typing import Any
 
 import boto3
 
-from .config import AWS_REGION, KB_TOP_K, KNOWLEDGE_BASE_ID, LLM_MODEL
+from .answer_summarizer import AnswerSummarizer
+from .config import (
+    AWS_REGION,
+    JUDGE_MODEL,
+    KB_TOP_K,
+    KNOWLEDGE_BASE_ID,
+    LLM_MODEL,
+    SUMMARY_MODEL,
+)
 from .prompts import (
+    ANSWER_JUDGE_PROMPT,
     FIRST_QUESTION_PROMPT,
     FOLLOW_UP_PROMPT,
     INTERVIEWER_SYSTEM_PROMPT,
@@ -28,6 +39,13 @@ from .session import InterviewSession
 logger = logging.getLogger("livekit-agent.llm")
 
 
+@dataclass
+class AnswerJudgment:
+    extracted_claims: list[str]
+    decision: str
+    focus_point: str = ""
+
+
 class LLMService:
     """Bedrock 기반 면접 질문 생성기."""
 
@@ -35,14 +53,22 @@ class LLMService:
         self,
         region: str = AWS_REGION,
         model_id: str = LLM_MODEL,
+        summary_model_id: str = SUMMARY_MODEL,
+        judge_model_id: str = JUDGE_MODEL,
         kb_id: str = KNOWLEDGE_BASE_ID,
         kb_top_k: int = KB_TOP_K,
     ):
         self.model_id = model_id
+        self.summary_model_id = summary_model_id
+        self.judge_model_id = judge_model_id
         self.kb_id = kb_id
         self.kb_top_k = kb_top_k
         self._runtime = boto3.client("bedrock-runtime", region_name=region)
         self._agent_runtime = boto3.client("bedrock-agent-runtime", region_name=region)
+        self._summarizer = AnswerSummarizer(
+            model_id=self.summary_model_id,
+            region=region,
+        )
 
     # ── Public API ─────────────────────────────────────────
 
@@ -62,17 +88,73 @@ class LLMService:
             messages=[{"role": "user", "content": [{"text": prompt}]}],
         )
 
-        session.add_question(result["question"], is_follow_up=False, intent=result["intent"])
+        session.add_question(
+            result["question"],
+            is_follow_up=False,
+            question_types=result["question_types"],
+            turn_number=len(session.history) + 1,
+        )
         return result
 
-    async def generate_follow_up(
-        self, session: InterviewSession, user_answer: str
-    ) -> dict[str, str]:
-        """꼬리질문 생성. 답변을 기록하고 이전 대화 + 참고 자료를 프롬프트에 주입."""
-        session.add_answer(user_answer)
+    async def analyze_last_answer(self, session: InterviewSession) -> AnswerJudgment:
+        """마지막 답변을 요약하고, 꼬리질문 필요 여부를 판단한다."""
+        if not session.history:
+            return AnswerJudgment(extracted_claims=[], decision="NEXT_QUESTION")
 
-        reference = await self._retrieve(f"{session.job_role} {user_answer[:200]}")
-        prompt = FOLLOW_UP_PROMPT.format(reference_data=reference)
+        turn = session.history[-1]
+        if not turn.answer.strip():
+            return AnswerJudgment(extracted_claims=[], decision="NEXT_QUESTION")
+
+        summary = await asyncio.to_thread(self._summarizer.summarize, turn.answer)
+        extracted_claims = summary.get("extracted_claims", [])
+
+        # 현재 주제에 대한 연속 꼬리질문 횟수 계산.
+        # history[-1]은 현재 답변 턴이므로 제외하고 그 앞을 역순 탐색한다.
+        consecutive_follow_ups = 0
+        for t in reversed(session.history[:-1]):
+            if t.is_follow_up:
+                consecutive_follow_ups += 1
+            else:
+                break
+
+        prompt = ANSWER_JUDGE_PROMPT.format(
+            question=turn.question,
+            question_types=turn.question_types or "미분류",
+            extracted_claims=_format_extracted_claims(extracted_claims),
+            consecutive_follow_ups=consecutive_follow_ups,
+        )
+        raw = await self._converse_text(
+            system_prompt="",
+            messages=[{"role": "user", "content": [{"text": prompt}]}],
+            model_id=self.judge_model_id,
+            temperature=0.0,
+            max_tokens=256,
+        )
+        decision, focus_point = _parse_judgment_text(raw)
+        logger.info(
+            "[analyze_last_answer] consecutive_follow_ups=%d decision=%s focus_point=%s",
+            consecutive_follow_ups,
+            decision,
+            focus_point,
+        )
+        return AnswerJudgment(
+            extracted_claims=extracted_claims,
+            decision=decision,
+            focus_point=focus_point,
+        )
+
+    async def generate_follow_up(
+        self, session: InterviewSession, focus_point: str
+    ) -> dict[str, str]:
+        """판단 결과를 바탕으로 꼬리질문을 생성한다."""
+        last_answer = session.history[-1].answer if session.history else ""
+        reference = await self._retrieve(
+            f"{session.job_role} {focus_point} {last_answer[:200]}"
+        )
+        prompt = FOLLOW_UP_PROMPT.format(
+            focus_point=focus_point,
+            reference_data=reference,
+        )
 
         messages = session.get_bedrock_messages()
         messages.append({"role": "user", "content": [{"text": prompt}]})
@@ -82,7 +164,20 @@ class LLMService:
             messages=messages,
         )
 
-        session.add_question(result["question"], is_follow_up=True, intent=result["intent"])
+        # 최종 부모 찾기: 마지막 턴이 꼬리질문이면 그 부모를 따라감, 원 질문이면 그 턴 번호가 부모
+        last_turn = session.history[-1]
+        if last_turn.is_follow_up:
+            parent = last_turn.parent_turn_number
+        else:
+            parent = last_turn.turn_number
+
+        session.add_question(
+            result["question"],
+            is_follow_up=True,
+            question_types=result["question_types"],
+            parent_turn_number=parent,
+            turn_number=len(session.history) + 1,
+        )
         return result
 
     async def generate_next_topic(
@@ -108,7 +203,12 @@ class LLMService:
             messages=messages,
         )
 
-        session.add_question(result["question"], is_follow_up=False, intent=result["intent"])
+        session.add_question(
+            result["question"],
+            is_follow_up=False,
+            question_types=result["question_types"],
+            turn_number=len(session.history) + 1,
+        )
         return result
 
     # ── Private helpers ─────────────────────────────────────
@@ -117,17 +217,35 @@ class LLMService:
         self, system_prompt: str, messages: list[dict]
     ) -> dict[str, str]:
         """Bedrock Converse 호출 후 JSON 파싱. 실패 시 text 만 question 으로 반환."""
+        raw = await self._converse_text(
+            system_prompt=system_prompt,
+            messages=messages,
+        )
+        return _parse_question_json(raw)
+
+    async def _converse_text(
+        self,
+        system_prompt: str,
+        messages: list[dict],
+        model_id: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 512,
+    ) -> str:
         def _call() -> str:
-            response = self._runtime.converse(
-                modelId=self.model_id,
-                system=[{"text": system_prompt}],
-                messages=messages,
-                inferenceConfig={"temperature": 0.7, "maxTokens": 512},
-            )
+            params: dict[str, Any] = {
+                "modelId": model_id or self.model_id,
+                "messages": messages,
+                "inferenceConfig": {
+                    "temperature": temperature,
+                    "maxTokens": max_tokens,
+                },
+            }
+            if system_prompt.strip():
+                params["system"] = [{"text": system_prompt}]
+            response = self._runtime.converse(**params)
             return response["output"]["message"]["content"][0]["text"]
 
-        raw = await asyncio.to_thread(_call)
-        return _parse_question_json(raw)
+        return await asyncio.to_thread(_call)
 
     async def _retrieve(self, query: str) -> str:
         """KB 에서 관련 자료 검색. 설정 안 됐으면 안내 문자열 반환."""
@@ -165,12 +283,49 @@ def _parse_question_json(raw: str) -> dict[str, str]:
     """LLM 응답 JSON 을 파싱. 실패하면 원문을 question 으로 담는다."""
     try:
         obj = json.loads(raw)
+        question_types = obj.get("question_types", [])
+        if isinstance(question_types, list):
+            qt = ", ".join(question_types)
+        else:
+            qt = str(question_types).strip()
+
         return {
             "question": obj.get("question", "").strip() or raw.strip(),
-            "intent": obj.get("intent", "").strip(),
+            "question_types": qt,
         }
+
     except (json.JSONDecodeError, AttributeError):
-        return {"question": raw.strip(), "intent": ""}
+        return {"question": raw.strip(), "question_types": ""}
+
+
+def _format_extracted_claims(extracted_claims: list[str]) -> str:
+    if not extracted_claims:
+        return "(추출된 핵심 내용 없음)"
+    return "\n".join(f"- {claim}" for claim in extracted_claims)
+
+
+def _parse_judgment_text(raw: str) -> tuple[str, str]:
+    decision_match = re.search(
+        r"DECISION:\s*(FOLLOW_UP|NEXT_QUESTION)",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    focus_match = re.search(r"FOCUS_POINT:\s*(.*)", raw, flags=re.IGNORECASE)
+
+    decision = "NEXT_QUESTION"
+    if decision_match:
+        decision = decision_match.group(1).upper()
+
+    focus_point = ""
+    if focus_match:
+        focus_point = focus_match.group(1).strip()
+
+    if decision != "FOLLOW_UP":
+        return "NEXT_QUESTION", ""
+
+    if not focus_point:
+        focus_point = "답변에서 근거와 구체적인 설명이 부족한 부분을 더 확인"
+    return decision, focus_point
 
 
 # ─────────────────────────────────────────────────────────
@@ -218,21 +373,69 @@ class MockLLMService:
         await asyncio.sleep(0.3)
         result = {
             "question": self._FIRST_QUESTIONS[0],
-            "intent": "지원자의 주도적 문제 해결 경험 파악 (mock)",
+            "question_types": "문제해결력 (mock)",
         }
-        session.add_question(result["question"], is_follow_up=False, intent=result["intent"])
+        session.add_question(
+            result["question"],
+            is_follow_up=False,
+            question_types=result["question_types"],
+            turn_number=len(session.history) + 1,
+        )
         return result
 
     async def generate_follow_up(
-        self, session: InterviewSession, user_answer: str
+        self, session: InterviewSession, focus_point: str
     ) -> dict[str, str]:
         await asyncio.sleep(0.3)
-        session.add_answer(user_answer)
         q = self._FOLLOW_UPS[self._follow_idx % len(self._FOLLOW_UPS)]
         self._follow_idx += 1
-        result = {"question": q, "intent": "답변 심화 (mock)"}
-        session.add_question(result["question"], is_follow_up=True, intent=result["intent"])
+        result = {
+            "question": q,
+            "question_types": "기술역량 (mock)",
+        }
+        # 최종 부모 찾기
+        last_turn = session.history[-1]
+        if last_turn.is_follow_up:
+            parent = last_turn.parent_turn_number
+        else:
+            parent = last_turn.turn_number
+        session.add_question(
+            result["question"],
+            is_follow_up=True,
+            question_types=result["question_types"],
+            parent_turn_number=parent,
+            turn_number=len(session.history) + 1,
+        )
         return result
+
+    async def analyze_last_answer(self, session: InterviewSession) -> AnswerJudgment:
+        await asyncio.sleep(0.1)
+        if not session.history:
+            return AnswerJudgment(extracted_claims=[], decision="NEXT_QUESTION")
+
+        answer = session.history[-1].answer.strip()
+        if not answer:
+            return AnswerJudgment(extracted_claims=[], decision="NEXT_QUESTION")
+
+        extracted_claims = [answer[:120]]
+        unknown_markers = ("모르", "기억이 안", "잘 모르", "생각이 안")
+        if any(marker in answer for marker in unknown_markers):
+            return AnswerJudgment(
+                extracted_claims=extracted_claims,
+                decision="NEXT_QUESTION",
+            )
+
+        if len(answer) < 50:
+            return AnswerJudgment(
+                extracted_claims=extracted_claims,
+                decision="FOLLOW_UP",
+                focus_point="답변이 짧아 근거와 구체적인 설명을 더 확인할 필요가 있음",
+            )
+
+        return AnswerJudgment(
+            extracted_claims=extracted_claims,
+            decision="NEXT_QUESTION",
+        )
 
     async def generate_next_topic(
         self, session: InterviewSession, user_answer: str = ""
@@ -242,8 +445,13 @@ class MockLLMService:
             session.add_answer(user_answer)
         q = self._NEXT_QUESTIONS[self._next_idx % len(self._NEXT_QUESTIONS)]
         self._next_idx += 1
-        result = {"question": q, "intent": "새 주제 탐색 (mock)"}
-        session.add_question(result["question"], is_follow_up=False, intent=result["intent"])
+        result = {"question": q, "question_types": "기술역량 (mock)"}
+        session.add_question(
+            result["question"],
+            is_follow_up=False,
+            question_types=result["question_types"],
+            turn_number=len(session.history) + 1,
+        )
         return result
 
 
