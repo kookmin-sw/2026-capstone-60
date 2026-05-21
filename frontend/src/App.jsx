@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "re
 import { deleteMe, fetchMe, login, logout, signup, updateMe } from "./api/authApi";
 import ApiTestPage from "./components/ApiTestPage";
 import {
+  deleteInterviewRecord,
   fetchInterviewRecordDetail,
   fetchInterviewRecords,
   saveInterviewRecord,
@@ -12,6 +13,8 @@ import HomeView from "./components/HomeView";
 import HistoryDetailView from "./components/HistoryDetailView";
 import HistoryListView from "./components/HistoryListView";
 import InterviewRoom from "./components/InterviewRoom";
+import JoinInterviewView from "./components/JoinInterviewView";
+import LobbyView from "./components/LobbyView";
 import LoginForm from "./components/LoginForm";
 import MyPage from "./components/MyPage";
 import ResultView from "./components/ResultView";
@@ -22,6 +25,7 @@ import {
   endInterviewSession,
   getInterviewResult,
   isMockMode,
+  leaveInterviewSession,
   triggerEvaluation,
   nextQuestion,
 } from "./api/interviewApi";
@@ -33,11 +37,29 @@ const ROUTE = {
   MYPAGE: "/mypage",
   API_TEST: "/api-test",
   SETUP: "/interview/setup",
+  LOBBY: "/interview/lobby",
+  JOIN: "/interview/join",
   ROOM: "/interview/room",
   EVALUATING: "/interview/evaluating",
   RESULT: "/interview/result",
   HISTORY: "/history",
 };
+
+function loginUrlWithRedirect(pathname) {
+  const safePath =
+    pathname && pathname.startsWith("/") && !pathname.startsWith("//")
+      ? pathname
+      : ROUTE.HOME;
+  return `${ROUTE.LOGIN}?redirect=${encodeURIComponent(safePath)}`;
+}
+
+function resolveRedirectTarget(search) {
+  const redirect = new URLSearchParams(search).get("redirect");
+  if (redirect && redirect.startsWith("/") && !redirect.startsWith("//")) {
+    return redirect;
+  }
+  return ROUTE.HOME;
+}
 
 export default function App() {
   const navigate = useNavigate();
@@ -67,23 +89,30 @@ export default function App() {
       setResult(null);
       setHistoryRecords([]);
       setHistoryDetail(null);
-      navigate(ROUTE.LOGIN, { replace: true });
+      navigate(loginUrlWithRedirect(location.pathname), { replace: true });
     };
     window.addEventListener("auth:unauthorized", handleUnauthorized);
     return () => window.removeEventListener("auth:unauthorized", handleUnauthorized);
-  }, [navigate]);
+  }, [navigate, location.pathname]);
 
   useEffect(() => {
     async function bootstrapAuth() {
       try {
         const profile = await fetchMe();
         setUser(profile);
-        if (location.pathname === ROUTE.LOGIN || location.pathname === ROUTE.SIGNUP) {
+        if (
+          location.pathname === ROUTE.LOGIN &&
+          new URLSearchParams(location.search).has("redirect")
+        ) {
+          navigate(resolveRedirectTarget(location.search), { replace: true });
+        } else if (location.pathname === ROUTE.LOGIN || location.pathname === ROUTE.SIGNUP) {
           navigate(ROUTE.HOME, { replace: true });
         }
       } catch {
         const protectedPaths = [
           ROUTE.SETUP,
+          ROUTE.LOBBY,
+          ROUTE.JOIN,
           ROUTE.ROOM,
           ROUTE.EVALUATING,
           ROUTE.RESULT,
@@ -91,7 +120,7 @@ export default function App() {
           ROUTE.MYPAGE,
         ];
         if (protectedPaths.some((p) => location.pathname.startsWith(p))) {
-          navigate(ROUTE.LOGIN, { replace: true });
+          navigate(loginUrlWithRedirect(location.pathname), { replace: true });
         }
       } finally {
         setBootstrapping(false);
@@ -106,7 +135,12 @@ export default function App() {
       setAuthLoading(true);
       setError("");
       await signup(loginId, password, name);
-      navigate(ROUTE.LOGIN);
+      const redirect = new URLSearchParams(location.search).get("redirect");
+      navigate(
+        redirect
+          ? `${ROUTE.LOGIN}?redirect=${encodeURIComponent(redirect)}`
+          : ROUTE.LOGIN
+      );
     } catch (signupError) {
       setError(signupError.message);
     } finally {
@@ -114,26 +148,69 @@ export default function App() {
     }
   };
 
+  const buildSessionState = (data, payload, extras = {}) => ({
+    sessionId: data.sessionId,
+    jobField: payload?.jobField ?? extras.jobField,
+    durationMinutes: payload?.durationMinutes ?? extras.durationMinutes,
+    livekit: data.livekit,
+    answerTimeLimitSeconds: data.answerTimeLimitSeconds || 90,
+    totalDurationSeconds: data.totalDurationSeconds || (payload?.durationMinutes ?? 15) * 60,
+    mode: data.mode || (data.maxParticipants > 1 ? "GROUP" : "SOLO"),
+    maxParticipants: data.maxParticipants ?? 1,
+    status: data.status,
+    role: extras.role || "HOST",
+    myIdentity: extras.myIdentity || (user?.id ? `user-${user.id}` : undefined),
+  });
+
   const startSession = async (payload) => {
     try {
       setStartLoading(true);
       setError("");
-      const response = await createInterviewSession(payload);
-      const data = response.data;
-      setSession({
-        sessionId: data.sessionId,
+
+      const isGroupMode = payload.mode === "GROUP" || (payload.maxParticipants ?? 1) > 1;
+      const apiBody = {
         jobField: payload.jobField,
         durationMinutes: payload.durationMinutes,
-        livekit: data.livekit,
-        answerTimeLimitSeconds: data.answerTimeLimitSeconds || 90,
-        totalDurationSeconds: data.totalDurationSeconds || payload.durationMinutes * 60,
+      };
+      if (payload.resumeIds) {
+        apiBody.resumeIds = payload.resumeIds;
+      }
+      if (isGroupMode) {
+        apiBody.maxParticipants = payload.maxParticipants ?? 2;
+      }
+
+      const response = await createInterviewSession(apiBody);
+      const data = response.data;
+      const sessionState = buildSessionState(data, payload, {
+        role: "HOST",
+        myIdentity: user?.id ? `user-${user.id}` : undefined,
       });
-      navigate(ROUTE.ROOM);
+      setSession(sessionState);
+      if (isGroupMode) {
+        navigate(ROUTE.LOBBY);
+      } else {
+        navigate(ROUTE.ROOM);
+      }
     } catch (sessionError) {
       setError(sessionError.message);
     } finally {
       setStartLoading(false);
     }
+  };
+
+  const handleEnterRoomFromLobby = (updatedSession) => {
+    setSession((prev) => ({ ...prev, ...updatedSession }));
+    navigate(ROUTE.ROOM);
+  };
+
+  const handleJoinedSession = (joinedSession) => {
+    setSession({
+      ...joinedSession,
+      answerTimeLimitSeconds: 90,
+      durationMinutes: joinedSession.durationMinutes ?? 15,
+      totalDurationSeconds: joinedSession.totalDurationSeconds ?? 15 * 60,
+      jobField: joinedSession.jobField ?? "BACKEND",
+    });
   };
 
   const signIn = async (loginId, password) => {
@@ -142,7 +219,7 @@ export default function App() {
       setError("");
       const authUser = await login(loginId, password);
       setUser(authUser);
-      navigate(ROUTE.HOME);
+      navigate(resolveRedirectTarget(location.search), { replace: true });
     } catch (loginError) {
       setError(loginError.message);
     } finally {
@@ -186,14 +263,59 @@ export default function App() {
     }
   };
 
-  const endSession = useCallback(
-    async (reason) => {
+  const leaveSession = useCallback(
+    async (options = {}) => {
       if (!session?.sessionId || ending) return;
       try {
         setEnding(true);
         setError("");
+        await leaveInterviewSession(session.sessionId);
+        if (options.awaitFeedback) {
+          setSession((prev) => (prev ? { ...prev, status: "EVALUATING" } : prev));
+          navigate(ROUTE.EVALUATING);
+          return;
+        }
+        setSession(null);
+        if (options.showHistoryHint) {
+          sessionStorage.setItem(
+            "groupLeaveNotice",
+            "호스트가 면접을 종료하면 「면접 기록」에서 본인 피드백을 확인할 수 있습니다."
+          );
+        }
+        navigate(ROUTE.HOME);
+      } catch (leaveError) {
+        setError(leaveError.message);
+      } finally {
+        setEnding(false);
+      }
+    },
+    [ending, navigate, session?.sessionId]
+  );
+
+  const handleGuestFeedbackReady = useCallback(
+    (feedbackData) => {
+      setResult(feedbackData);
+      setSession((prev) => (prev ? { ...prev, status: "COMPLETED" } : prev));
+      navigate(ROUTE.RESULT);
+    },
+    [navigate]
+  );
+
+  const endSession = useCallback(
+    async (reason) => {
+      if (!session?.sessionId || ending) return;
+      const isGroup = session.mode === "GROUP";
+      const isHost = session.role === "HOST";
+
+      if (isGroup && !isHost) {
+        await leaveSession({ awaitFeedback: true });
+        return;
+      }
+
+      try {
+        setEnding(true);
+        setError("");
         await endInterviewSession(session.sessionId, reason);
-        // 세션 종료 트랜잭션 커밋 후 평가 트리거 (별도 요청)
         await triggerEvaluation(session.sessionId);
         navigate(ROUTE.EVALUATING);
       } catch (endError) {
@@ -202,7 +324,7 @@ export default function App() {
         setEnding(false);
       }
     },
-    [ending, session?.sessionId]
+    [ending, session?.sessionId, session?.mode, session?.role, leaveSession]
   );
 
   useEffect(() => {
@@ -253,10 +375,8 @@ export default function App() {
     try {
       setHistoryLoading(true);
       setError("");
-      const response = await fetchInterviewRecords();
-      // 백엔드가 배열을 직접 반환하므로 response 자체가 배열
-      const records = Array.isArray(response) ? response : (response?.data || []);
-      setHistoryRecords(records);
+      const records = await fetchInterviewRecords();
+      setHistoryRecords(Array.isArray(records) ? records : []);
       navigate(ROUTE.HISTORY);
     } catch (historyError) {
       setError(historyError.message);
@@ -271,9 +391,8 @@ export default function App() {
       (async () => {
         try {
           setHistoryLoading(true);
-          const response = await fetchInterviewRecords();
-          const records = Array.isArray(response) ? response : (response?.data || []);
-          setHistoryRecords(records);
+          const records = await fetchInterviewRecords();
+          setHistoryRecords(Array.isArray(records) ? records : []);
         } catch {
           // 조용히 실패
         } finally {
@@ -295,6 +414,15 @@ export default function App() {
       setError(detailError.message);
     } finally {
       setHistoryDetailLoading(false);
+    }
+  };
+
+  const handleDeleteRecord = async (sessionId) => {
+    try {
+      await deleteInterviewRecord(sessionId);
+      setHistoryRecords((prev) => prev.filter((r) => r.sessionId !== sessionId));
+    } catch (deleteError) {
+      setError(deleteError.message || "면접 기록 삭제에 실패했습니다.");
     }
   };
 
@@ -346,7 +474,7 @@ export default function App() {
           path={ROUTE.LOGIN}
           element={
             user ? (
-              <Navigate to={ROUTE.HOME} replace />
+              <Navigate to={resolveRedirectTarget(location.search)} replace />
             ) : (
               <LoginForm onLogin={signIn} loading={authLoading} />
             )
@@ -356,7 +484,7 @@ export default function App() {
           path={ROUTE.SIGNUP}
           element={
             user ? (
-              <Navigate to={ROUTE.HOME} replace />
+              <Navigate to={resolveRedirectTarget(location.search)} replace />
             ) : (
               <SignupForm onSignup={signUp} loading={authLoading} />
             )
@@ -389,10 +517,44 @@ export default function App() {
           }
         />
         <Route
+          path={ROUTE.LOBBY}
+          element={
+            user && session ? (
+              <LobbyView
+                session={session}
+                onEnterRoom={handleEnterRoomFromLobby}
+                onError={setError}
+              />
+            ) : (
+              <Navigate to={ROUTE.SETUP} replace />
+            )
+          }
+        />
+        <Route
+          path={`${ROUTE.JOIN}/:sessionId`}
+          element={
+            user ? (
+              <JoinInterviewView
+                user={user}
+                onJoined={handleJoinedSession}
+                onError={setError}
+              />
+            ) : (
+              <Navigate to={loginUrlWithRedirect(location.pathname)} replace />
+            )
+          }
+        />
+        <Route
           path={ROUTE.ROOM}
           element={
             user && session ? (
-              <InterviewRoom session={session} onSessionEnd={endSession} ending={ending} />
+              <InterviewRoom
+                session={session}
+                onSessionEnd={endSession}
+                onSessionLeave={() => leaveSession({ awaitFeedback: true })}
+                onGuestFeedbackReady={handleGuestFeedbackReady}
+                ending={ending}
+              />
             ) : (
               <Navigate to={ROUTE.SETUP} replace />
             )
@@ -426,6 +588,7 @@ export default function App() {
                 loading={historyLoading}
                 records={historyRecords}
                 onSelectRecord={openHistoryDetail}
+                onDeleteRecord={handleDeleteRecord}
               />
             ) : (
               <Navigate to={ROUTE.LOGIN} replace />

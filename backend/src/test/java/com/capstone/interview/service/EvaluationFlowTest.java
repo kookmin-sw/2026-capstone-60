@@ -5,8 +5,10 @@ import com.capstone.interview.config.LLMClient;
 import com.capstone.interview.dto.FeedbackListDto;
 import com.capstone.interview.dto.FeedbackResponse;
 import com.capstone.interview.entity.Interview;
+import com.capstone.interview.entity.InterviewMode;
 import com.capstone.interview.entity.InterviewQna;
 import com.capstone.interview.entity.Member;
+import com.capstone.interview.repository.InterviewParticipantRepository;
 import com.capstone.interview.repository.InterviewQnaRepository;
 import com.capstone.interview.repository.InterviewRepository;
 import com.capstone.interview.repository.MemberRepository;
@@ -31,6 +33,7 @@ class EvaluationFlowTest {
     private static FeedbackService feedbackService;
     private static InterviewRepository interviewRepository;
     private static InterviewQnaRepository interviewQnaRepository;
+    private static InterviewParticipantRepository participantRepository;
     private static MemberRepository memberRepository;
     private static Interview testInterview;
     private static List<InterviewQna> testQnas;
@@ -41,14 +44,15 @@ class EvaluationFlowTest {
 
         interviewRepository = mock(InterviewRepository.class);
         interviewQnaRepository = mock(InterviewQnaRepository.class);
+        participantRepository = mock(InterviewParticipantRepository.class);
         memberRepository = mock(MemberRepository.class);
         LLMClient llmClient = new MockLLMClient();
         ObjectMapper objectMapper = new ObjectMapper();
 
         evaluationService = new EvaluationService(
-                interviewRepository, interviewQnaRepository, llmClient, objectMapper);
+                interviewRepository, interviewQnaRepository, participantRepository, llmClient, objectMapper);
         feedbackService = new FeedbackService(
-                interviewRepository, interviewQnaRepository, memberRepository);
+                interviewRepository, interviewQnaRepository, participantRepository, memberRepository, objectMapper);
 
         Member member = createMember(1L, "test1", "Tester");
         testInterview = createInterview(1L, "sess-test-0001", member, "BACKEND");
@@ -68,11 +72,15 @@ class EvaluationFlowTest {
                 .thenReturn(Optional.of(testInterview));
         when(interviewQnaRepository.findByInterviewOrderBySequenceNumberAsc(testInterview))
                 .thenReturn(testQnas);
+        for (InterviewQna qna : testQnas) {
+            when(interviewQnaRepository.findByInterviewAndSequenceNumber(testInterview, qna.getSequenceNumber()))
+                    .thenReturn(Optional.of(qna));
+        }
         when(interviewQnaRepository.saveAll(anyList()))
                 .thenAnswer(inv -> inv.getArgument(0));
         when(interviewRepository.save(any(Interview.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
-        when(interviewRepository.findByMemberIdOrderByCreatedAtDesc(1L))
+        when(interviewRepository.findByMemberIdAndStatusOrderByCreatedAtDesc(eq(1L), any()))
                 .thenReturn(List.of(testInterview));
         when(memberRepository.findByLoginId("test1"))
                 .thenReturn(Optional.of(member));
@@ -119,7 +127,7 @@ class EvaluationFlowTest {
 
         System.out.println("\n=== Stage 2: FeedbackService.getFeedback() ===");
 
-        FeedbackResponse response = feedbackService.getFeedback("sess-test-0001");
+        FeedbackResponse response = feedbackService.getFeedback("sess-test-0001", "test1");
 
         System.out.println("[Output] FeedbackResponse:");
         System.out.println("  success: " + response.isSuccess());
@@ -157,7 +165,6 @@ class EvaluationFlowTest {
         System.out.println("[Output] FeedbackListDto:");
         System.out.println("  sessionId: " + item.sessionId());
         System.out.println("  category: " + item.category());
-        System.out.println("  status: " + item.status());
         System.out.println("  overallScore: " + item.overallScore());
         System.out.println("  createdAt: " + item.createdAt());
 
@@ -179,7 +186,12 @@ class EvaluationFlowTest {
 
     private static Interview createInterview(Long id, String sessionId, Member member, String category) throws Exception {
         Interview interview = Interview.builder()
-                .member(member).category(category).sessionId(sessionId).build();
+                .member(member)
+                .category(category)
+                .sessionId(sessionId)
+                .maxParticipants(1)
+                .mode(InterviewMode.SOLO)
+                .build();
         interview.start();
         setField(interview, "id", id);
         setField(interview, "createdAt", LocalDateTime.now());
@@ -194,6 +206,7 @@ class EvaluationFlowTest {
         setField(qna, "sequenceNumber", seq);
         setField(qna, "questionContent", question);
         setField(qna, "answerContent", answer);
+        setField(qna, "answerSummary", "[\"" + answer.replace("\"", "\\\"") + "\"]");
         setField(qna, "isFollowUp", followUp);
         setField(qna, "createdAt", LocalDateTime.now());
         setField(qna, "updatedAt", LocalDateTime.now());

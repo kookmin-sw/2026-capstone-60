@@ -83,3 +83,24 @@ export async function getMyResumes() {
 
   return response.json();
 }
+
+/**
+ * 이력서를 삭제한다.
+ *
+ * @param {number} resumeId - 삭제할 이력서 ID
+ */
+export async function deleteResume(resumeId) {
+  const token = getAccessToken();
+
+  const response = await fetch(`${RESUME_API_URL}/${resumeId}`, {
+    method: "DELETE",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.message || "이력서 삭제에 실패했습니다.");
+  }
+}

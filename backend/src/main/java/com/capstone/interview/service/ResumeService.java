@@ -4,6 +4,7 @@ import com.capstone.interview.dto.ResumeResponse;
 import com.capstone.interview.dto.ResumeUploadRequest;
 import com.capstone.interview.entity.Member;
 import com.capstone.interview.entity.Resume;
+import com.capstone.interview.repository.InterviewRepository;
 import com.capstone.interview.repository.MemberRepository;
 import com.capstone.interview.repository.ResumeRepository;
 import lombok.RequiredArgsConstructor;
@@ -25,8 +26,10 @@ import java.util.List;
 public class ResumeService {
 
     private final PdfParserService pdfParserService;
+    private final ResumePreprocessorService resumePreprocessorService;
     private final ResumeRepository resumeRepository;
     private final MemberRepository memberRepository;
+    private final InterviewRepository interviewRepository;
 
     /**
      * PDF 이력서를 업로드하고 파싱하여 DB에 저장한다.
@@ -46,10 +49,12 @@ public class ResumeService {
         }
 
         // DB 저장
+        String keywords = preprocessSafely(originalText);
         Resume resume = Resume.builder()
                 .member(member)
                 .title(title)
                 .originalText(originalText)
+                .keywords(keywords)
                 .build();
 
         Resume saved = resumeRepository.save(resume);
@@ -71,10 +76,12 @@ public class ResumeService {
             throw new IllegalArgumentException("이력서 텍스트가 비어있습니다.");
         }
 
+        String keywords = preprocessSafely(request.originalText());
         Resume resume = Resume.builder()
                 .member(member)
                 .title(request.title())
                 .originalText(request.originalText())
+                .keywords(keywords)
                 .build();
 
         Resume saved = resumeRepository.save(resume);
@@ -106,6 +113,30 @@ public class ResumeService {
         return toResponse(resume);
     }
 
+    /**
+     * 이력서를 삭제한다. 본인의 이력서만 삭제 가능.
+     * 면접 기록에서 참조 중인 경우 참조를 해제(NULL)한 뒤 삭제한다.
+     */
+    @Transactional
+    public void deleteResume(String loginId, Long resumeId) {
+        Member member = memberRepository.findByLoginId(loginId)
+                .orElseThrow(() -> new IllegalArgumentException("회원을 찾을 수 없습니다."));
+
+        Resume resume = resumeRepository.findById(resumeId)
+                .orElseThrow(() -> new IllegalArgumentException("이력서를 찾을 수 없습니다: " + resumeId));
+
+        if (!resume.getMember().getId().equals(member.getId())) {
+            throw new IllegalArgumentException("본인의 이력서만 삭제할 수 있습니다.");
+        }
+
+        // 면접 기록에서 이력서 참조 해제
+        interviewRepository.findByResumeId(resumeId)
+                .forEach(interview -> interview.clearResume());
+
+        resumeRepository.delete(resume);
+        log.info("[이력서 삭제] id={}, memberId={}", resumeId, member.getId());
+    }
+
     private ResumeResponse toResponse(Resume resume) {
         return new ResumeResponse(
                 resume.getId(),
@@ -115,5 +146,14 @@ public class ResumeService {
                 resume.getKeywords(),
                 resume.getCreatedAt()
         );
+    }
+
+    private String preprocessSafely(String originalText) {
+        try {
+            return resumePreprocessorService.preprocess(originalText);
+        } catch (Exception e) {
+            log.warn("[이력서 전처리 실패] 원문 저장은 계속 진행합니다. reason={}", e.getMessage());
+            return null;
+        }
     }
 }

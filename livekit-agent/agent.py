@@ -7,12 +7,11 @@ AI 모의면접 LiveKit Agent.
 책임 범위:
 - LiveKit 파이프라인(STT/턴감지/TTS) 세팅 — STT/TTS 는 LiveKit Inference 사용
 - LLM 호출은 Bedrock 직접 (boto3) — ai/llm_service.py
-- 사용자 답변을 LLM 에 전달하고, 생성된 질문을 TTS 로 발화
+- 사용자 답변을 요약/판단한 뒤, 생성된 질문을 TTS 로 발화
 
 하지 않는 일:
 - HTTP 서버 노출 (Agent 는 Worker 이지 HTTP 서버가 아님)
 - DB 저장 (나중에 Spring API 호출로 추가 가능)
-- 꼬리질문 여부 판단 (기본은 새 주제 질문. 판단 AI 추가 시 FOLLOW_UP 분기)
 
 실행:
     python agent.py console    # 로컬 터미널에서 음성 대화 테스트
@@ -41,16 +40,24 @@ from livekit.agents import (
     inference,
     llm as llm_types,
 )
+from livekit.agents import WorkerOptions
 from livekit.plugins import silero
 
 from ai.llm_service import LLMService, MockLLMService, create_llm_service
-from ai.qna_client import save_qna
-from ai.session import InterviewSession
+from ai.qna_client import notify_session_failed, save_qna, update_current_speaker
+from ai.session import (
+    GroupInterviewSession,
+    InterviewSession,
+    ParticipantInterviewSession,
+)
 
 load_dotenv()
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("livekit-agent")
+GROUP_START_FALLBACK_SECONDS = float(os.getenv("GROUP_START_FALLBACK_SECONDS", "10"))
+GROUP_PARTICIPANT_WAIT_SECONDS = float(os.getenv("GROUP_PARTICIPANT_WAIT_SECONDS", "20"))
+STT_DRAIN_DELAY_SECONDS = float(os.getenv("STT_DRAIN_DELAY_SECONDS", "0.4"))
 
 
 # ─────────────────────────────────────────────────────────
@@ -113,6 +120,9 @@ class InterviewerAgent(Agent):
     ):
         super().__init__(instructions="")  # LiveKit 기본 LLM 미사용
         self._llm_service = llm_service
+        self._speaking = False
+        self._transitioning_turn = False
+        self._session_active = True
         self.interview = InterviewSession(
             session_id=session_id,
             job_role=job_role,
@@ -121,13 +131,45 @@ class InterviewerAgent(Agent):
             system_prompt=llm_service.build_system_prompt(job_role, resume_text),
         )
 
+    async def _say(self, text: str) -> None:
+        self._speaking = True
+        try:
+            try:
+                await self.session.say(text, allow_interruptions=False)
+                return
+            except TypeError:
+                pass
+
+            try:
+                await self.session.say(text, allow_barge_in=False)
+                return
+            except TypeError:
+                pass
+
+            try:
+                await self.session.say(text, interruptible=False)
+                return
+            except TypeError:
+                pass
+
+            await self.session.say(text)
+        except RuntimeError as e:
+            self._session_active = False
+            logger.warning("[TTS skipped] session is not active: %s", e)
+        finally:
+            self._speaking = False
+
+    def mark_session_inactive(self) -> None:
+        self._session_active = False
+
     async def on_enter(self) -> None:
         """Room 입장 직후: STT 버퍼링 등록 → Data Message 핸들러 등록 → 첫 질문 발화."""
 
         # ── STT 버퍼링 (§5.3.1) ──
-        # VAD 기반 자동 턴 종료를 끈 상태이므로 STT 결과를 Agent가 직접 모아둔다.
         @self.session.on("user_input_transcribed")
         def _on_user_transcribed(ev):
+            if self._speaking:
+                return
             transcript = getattr(ev, "transcript", "")
             if getattr(ev, "is_final", True) and transcript:
                 self.interview.append_to_buffer(transcript)
@@ -142,8 +184,10 @@ class InterviewerAgent(Agent):
         def _on_data_received(packet, *args, **kwargs):
             """Backend → Agent: NEXT / END 메시지 처리."""
             try:
-                data = packet.data if hasattr(packet, 'data') else packet
-                msg = json.loads(data.decode("utf-8") if isinstance(data, bytes) else str(data))
+                data = packet.data if hasattr(packet, "data") else packet
+                msg = json.loads(
+                    data.decode("utf-8") if isinstance(data, bytes) else str(data)
+                )
             except (json.JSONDecodeError, UnicodeDecodeError) as e:
                 logger.warning("Data Message 파싱 실패: %s", e)
                 return
@@ -152,10 +196,8 @@ class InterviewerAgent(Agent):
             payload = msg.get("payload", {})
 
             if msg_type == "NEXT":
-                import asyncio
                 asyncio.ensure_future(self._handle_next(payload))
             elif msg_type == "END":
-                import asyncio
                 asyncio.ensure_future(self._handle_end(payload))
             else:
                 logger.debug("알 수 없는 Data Message type: %s", msg_type)
@@ -165,31 +207,45 @@ class InterviewerAgent(Agent):
             result = await self._llm_service.generate_first_question(self.interview)
         except Exception as e:
             logger.exception("첫 질문 생성 실패: %s", e)
-            await self.session.say(
+            await self._say(
                 "죄송합니다, 면접 준비에 문제가 있습니다. 잠시 후 다시 시도해 주세요."
             )
             return
 
         logger.info("[첫 질문] %s", result["question"])
-        await self.session.say(result["question"])
 
-        # 첫 질문도 QUESTION publish (§5.4: TTS 재생 완료 후)
+        # 음성 세션이 닫혀도 화면에는 질문이 떠야 하므로 publish를 먼저 수행한다.
         await self._publish_question(result, is_follow_up=False)
+        await self._say(result["question"])
 
     async def _publish_question(self, result: dict, is_follow_up: bool) -> None:
         """QUESTION Data Message를 Room에 publish한다 (§5.4).
 
-        TTS say()가 재생 완료까지 await하므로, 이 메서드는 say() 이후에 호출된다.
-        publish 실패는 치명적이지 않으므로 try/except로 감싸고 로그만 남긴다.
+        parent 탐색 규칙:
+        - history[-1] 이 방금 add_question() 으로 추가된 새 질문이므로,
+          history[:-1] 범위에서 역순으로 첫 번째 메인 질문(is_follow_up=False)을 찾는다.
+        - turn_number 는 history 인덱스+1 이 아니라 ConversationTurn.turn_number 를
+          직접 사용한다 (그룹 면접에서 turn_number 가 history 인덱스와 다를 수 있음).
         """
         try:
+            history = self.interview.history
+
+            parent_turn_number = 0
+            if is_follow_up and len(history) >= 2:
+                # 방금 추가된 새 질문(history[-1])을 제외하고 역순 탐색
+                for turn in reversed(history[:-1]):
+                    if not turn.is_follow_up:
+                        parent_turn_number = turn.turn_number
+                        break
+
             payload = {
                 "type": "QUESTION",
                 "payload": {
-                    "turnNumber": len(self.interview.history),
+                    "turnNumber": len(history),
                     "text": result["question"],
-                    "intent": result.get("intent", ""),
+                    "intent": result.get("question_types", ""),
                     "isFollowUp": is_follow_up,
+                    "parentTurnNumber": parent_turn_number,
                 },
             }
             await self.session.room_io.room.local_participant.publish_data(
@@ -197,9 +253,80 @@ class InterviewerAgent(Agent):
                 reliable=True,
                 topic="interview",
             )
-            logger.info("[QUESTION publish] turn=%d", len(self.interview.history))
+            logger.info(
+                "[QUESTION publish] turn=%d isFollowUp=%s parent=%d",
+                len(history),
+                is_follow_up,
+                parent_turn_number,
+            )
         except Exception as e:
             logger.warning("[QUESTION publish 실패] %s — 음성은 이미 전달됨, 면접 계속", e)
+
+    async def _choose_next_question(self) -> tuple[dict[str, str], bool]:
+        """마지막 답변을 요약/판단한 뒤 FOLLOW_UP 또는 NEXT_QUESTION 으로 분기한다.
+
+        꼬리질문 횟수 제한(consecutive_follow_ups >= 2)에 걸려
+        generate_next_topic() 을 호출하는 경우에도 _analyze_last_turn() 은
+        반드시 먼저 실행한다. 이렇게 해야:
+          1. answer_summary / decision / focus_point 가 DB 에 저장되고
+          2. [answer analysis] 로그가 남아 디버깅이 가능하다.
+        """
+        last_turn = self.interview.history[-1] if self.interview.history else None
+        if not last_turn:
+            return await self._llm_service.generate_next_topic(self.interview), False
+
+        # 완전 무응답 → 요약/판단 호출 자체를 건너뜀
+        if not last_turn.answer.strip():
+            return await self._llm_service.generate_next_topic(self.interview), False
+
+        # 꼬리질문 횟수와 무관하게 항상 분석 먼저 실행
+        judgment = await self._analyze_last_turn()
+
+        # 꼬리질문 최대 횟수 제한: 역순 탐색으로 연속 횟수 카운트
+        if last_turn.is_follow_up:
+            consecutive_follow_ups = 0
+            for turn in reversed(self.interview.history):
+                if getattr(turn, "is_follow_up", False):
+                    consecutive_follow_ups += 1
+                else:
+                    break
+            logger.info("[choose_next] consecutive_follow_ups=%d", consecutive_follow_ups)
+
+            if consecutive_follow_ups >= 2:
+                # 횟수 초과 → 새 주제로 강제 전환
+                return await self._llm_service.generate_next_topic(self.interview), False
+
+        if judgment is None:
+            return await self._llm_service.generate_next_topic(self.interview), False
+
+        if judgment.decision == "FOLLOW_UP":
+            result = await self._llm_service.generate_follow_up(
+                self.interview,
+                judgment.focus_point,
+            )
+            return result, True
+
+        return await self._llm_service.generate_next_topic(self.interview), False
+
+    async def _analyze_last_turn(self):
+        """마지막 답변을 분석하고 결과를 캐싱한다. 실패 시 None 반환."""
+        try:
+            judgment = await self._llm_service.analyze_last_answer(self.interview)
+            self.interview.set_last_turn_analysis(
+                answer_summary=judgment.extracted_claims,
+                decision=judgment.decision,
+                focus_point=judgment.focus_point,
+            )
+            logger.info(
+                "[answer analysis] decision=%s focus_point=%s summary_count=%d",
+                judgment.decision,
+                judgment.focus_point,
+                len(judgment.extracted_claims),
+            )
+            return judgment
+        except Exception as e:
+            logger.warning("answer analysis failed: %s; falling back to NEXT_QUESTION", e)
+            return None
 
     async def _handle_next(self, payload: dict) -> None:
         """NEXT 수신: ① STT 버퍼 flush → ② QnA 저장 (fire-and-forget) → ③ 다음 질문 생성·발화 → ④ QUESTION publish.
@@ -207,45 +334,99 @@ class InterviewerAgent(Agent):
         §5.3 처리 순서:
         1. STT 버퍼에 누적된 텍스트를 직전 턴에 기록
         2. 직전 턴의 Q+A를 Backend로 저장 (fire-and-forget)
-        3. 다음 질문 생성
+        3. 답변 요약/판단 후 꼬리질문 또는 다음 질문 생성
         4. TTS 발화 → 재생 완료 후 QUESTION 메시지 publish
         """
         turn_number = payload.get("turnNumber", 0)
         logger.info("[NEXT 수신] turnNumber=%d", turn_number)
 
-        # ① STT 버퍼 flush → 직전 턴 답변 기록
-        answer = self.interview.flush_buffer()
-        self.interview.add_answer(answer)
-        logger.info("[답변 확정] turn=%d answer_len=%d", turn_number - 1, len(answer))
-
-        # ② QnA 저장 — fire-and-forget (§5.5)
-        prev_turn = self.interview.history[-1] if self.interview.history else None
-        if prev_turn:
-            prev_turn_number = len(self.interview.history)
-            asyncio.create_task(save_qna(
-                session_id=self.interview.session_id,
-                turn_number=prev_turn_number,
-                question=prev_turn.question,
-                intent=prev_turn.intent,
-                is_follow_up=prev_turn.is_follow_up,
-                answer=prev_turn.answer,
-            ))
-
-        # ③ 다음 질문 생성·발화
-        try:
-            result = await self._llm_service.generate_next_topic(self.interview)
-        except Exception as e:
-            logger.exception("다음 질문 생성 실패 (NEXT): %s", e)
-            await self.session.say(
-                "죄송합니다, 잠시 문제가 생겼습니다. 다음 질문으로 넘어가겠습니다."
-            )
+        if not self._session_active:
+            logger.warning("[NEXT ignored] agent session is inactive turnNumber=%d", turn_number)
             return
 
-        logger.info("[다음 질문] turn=%d question=%s", turn_number, result["question"])
-        await self.session.say(result["question"])
+        if self._transitioning_turn:
+            logger.warning("[NEXT 중복 무시] 이미 처리 중인 NEXT가 있음 turnNumber=%d", turn_number)
+            return
 
-        # ④ QUESTION publish — TTS say()가 재생 완료까지 기다리므로 여기서 publish (§5.4)
-        await self._publish_question(result, is_follow_up=False)
+        self._transitioning_turn = True
+        try:
+            # ① STT 버퍼 flush → 직전 턴 답변 기록
+            answer = self.interview.flush_buffer()
+
+            # 질문 반복 요청 감지 → 현재 질문을 다시 발화하고 턴 진행하지 않음
+            repeat_keywords = (
+                "다시", "한번 더", "못 들었", "다시 한번", "뭐라고", "한 번 더",
+                "듣고싶", "듣고 싶", "다시 들", "한번만 더", "다시요", "뭐라고요",
+            )
+            if answer.strip() and any(kw in answer for kw in repeat_keywords) and len(answer.strip()) < 30:
+                last_turn = self.interview.history[-1] if self.interview.history else None
+                if last_turn:
+                    logger.info("[질문 반복 요청] answer=%s", answer.strip())
+                    await self._say(last_turn.question)
+                    try:
+                        repeat_payload = {
+                            "type": "QUESTION",
+                            "payload": {
+                                "turnNumber": len(self.interview.history),
+                                "text": last_turn.question,
+                                "intent": last_turn.question_types,
+                                "isFollowUp": last_turn.is_follow_up,
+                                "parentTurnNumber": last_turn.parent_turn_number,
+                                "isRepeat": True,
+                            },
+                        }
+                        await self.session.room_io.room.local_participant.publish_data(
+                            payload=json.dumps(repeat_payload).encode("utf-8"),
+                            reliable=True,
+                            topic="interview",
+                        )
+                    except Exception as e:
+                        logger.warning("[QUESTION repeat publish 실패] %s", e)
+                    return
+
+            self.interview.add_answer(answer)
+            logger.info("[답변 확정] turn=%d answer_len=%d", turn_number - 1, len(answer))
+
+            # ② 직전 턴 참조 (QnA 저장용 — ③ 이후에 fire-and-forget)
+            prev_turn = self.interview.history[-1] if self.interview.history else None
+            prev_turn_number = len(self.interview.history)
+
+            # ③ 다음 질문 생성·발화
+            try:
+                result, is_follow_up = await self._choose_next_question()
+            except Exception as e:
+                logger.exception("다음 질문 생성 실패 (NEXT): %s", e)
+                await self._say(
+                    "죄송합니다, 잠시 문제가 생겼습니다. 다음 질문으로 넘어가겠습니다."
+                )
+                return
+
+            # answer_summary / decision / focus_point 가 set_last_turn_analysis() 로
+            # 채워진 뒤에 저장해야 하므로 _choose_next_question() 완료 후 fire-and-forget
+            if prev_turn:
+                asyncio.create_task(save_qna(
+                    session_id=self.interview.session_id,
+                    turn_number=prev_turn_number,
+                    question=prev_turn.question,
+                    question_types=prev_turn.question_types,
+                    is_follow_up=prev_turn.is_follow_up,
+                    answer=prev_turn.answer,
+                    answer_summary=prev_turn.answer_summary,
+                    follow_up_decision=prev_turn.decision,
+                    focus_point=prev_turn.focus_point,
+                    parent_turn_number=prev_turn.parent_turn_number if prev_turn.is_follow_up else None,
+                ))
+
+            logger.info("[다음 질문] turn=%d question=%s", turn_number, result["question"])
+
+            # ④ QUESTION publish — 음성 실패가 화면 질문 표시를 막지 않도록 먼저 전송한다.
+            # history[-1] 은 _choose_next_question() 내부 add_question() 으로 추가된 새 질문.
+            # is_follow_up 은 history[-1].is_follow_up 을 직접 읽어 사용한다.
+            last_added = self.interview.history[-1]
+            await self._publish_question(result, is_follow_up=last_added.is_follow_up)
+            await self._say(result["question"])
+        finally:
+            self._transitioning_turn = False
 
     async def _handle_end(self, payload: dict) -> None:
         """END 수신: ① STT 버퍼 flush → ② 마지막 턴 저장 (await) → ③ shutdown.
@@ -259,6 +440,10 @@ class InterviewerAgent(Agent):
         logger.info("[END 수신] reason=%s", reason)
 
         # ① STT 버퍼 flush → 마지막 턴 답변 기록
+        if not self._session_active:
+            logger.warning("[END ignored] agent session is inactive reason=%s", reason)
+            return
+
         answer = self.interview.flush_buffer()
         self.interview.add_answer(answer)
         logger.info("[마지막 답변 확정] answer_len=%d", len(answer))
@@ -267,18 +452,26 @@ class InterviewerAgent(Agent):
         last_turn = self.interview.history[-1] if self.interview.history else None
         if last_turn:
             last_turn_number = len(self.interview.history)
+            await self._analyze_last_turn()
             await save_qna(
                 session_id=self.interview.session_id,
                 turn_number=last_turn_number,
                 question=last_turn.question,
-                intent=last_turn.intent,
+                question_types=last_turn.question_types,
                 is_follow_up=last_turn.is_follow_up,
                 answer=last_turn.answer,
+                answer_summary=last_turn.answer_summary,
+                follow_up_decision=last_turn.decision,
+                focus_point=last_turn.focus_point,
+                parent_turn_number=last_turn.parent_turn_number if last_turn.is_follow_up else None,
             )
 
         # ③ shutdown
-        logger.info("[면접 종료] session=%s total_turns=%d",
-                    self.interview.session_id, len(self.interview.history))
+        logger.info(
+            "[면접 종료] session=%s total_turns=%d",
+            self.interview.session_id,
+            len(self.interview.history),
+        )
         try:
             self.session.shutdown()
         except RuntimeError:
@@ -292,7 +485,6 @@ class InterviewerAgent(Agent):
     ) -> AsyncIterable[str]:
         """
         기본 LLM 노드 오버라이드.
-        사용자 답변이 끝날 때마다 호출된다.
 
         NOTE: 턴 전환은 이제 Backend의 NEXT Data Message로 제어된다.
         이 메서드는 VAD 기반 자동 턴 종료가 비활성화된 상태에서는
@@ -302,12 +494,17 @@ class InterviewerAgent(Agent):
         user_answer = _extract_last_user_text(chat_ctx)
         logger.info("[llm_node 답변 수신] %s", user_answer)
 
+        if self._transitioning_turn:
+            logger.warning("[llm_node 스킵] _handle_next 처리 중 - 중복 실행 방지")
+            return
+
         if not user_answer.strip():
             yield "답변이 제대로 들리지 않았습니다. 다시 말씀해 주시겠어요?"
             return
 
         try:
-            result = await self._llm_service.generate_next_topic(self.interview, user_answer)
+            self.interview.add_answer(user_answer)
+            result, _ = await self._choose_next_question()
         except Exception as e:
             logger.exception("다음 질문 생성 실패: %s", e)
             yield "죄송합니다, 잠시 문제가 생겼습니다. 다음 질문으로 넘어가겠습니다."
@@ -317,6 +514,535 @@ class InterviewerAgent(Agent):
         yield result["question"]
 
 
+# ─────────────────────────────────────────────────────────
+# 그룹 면접 Agent
+# ─────────────────────────────────────────────────────────
+
+class GroupInterviewerAgent(Agent):
+    """
+    그룹 면접 Agent.
+
+    - Backend START 수신 전까지 질문하지 않는다.
+    - 라운드마다 참가자 순서를 셔플하고, 한 라운드에 모두 한 번씩 기본 질문을 받는다.
+    - 꼬리질문은 같은 참가자에게 최대 1회만 허용한다.
+    """
+
+    def __init__(
+        self,
+        session_id: str,
+        job_role: str,
+        participants: list[dict[str, Any]],
+        fallback_resume_text: str,
+        cover_letter_text: str,
+        llm_service: "LLMService | MockLLMService",
+    ):
+        super().__init__(instructions="")
+        self._llm_service = llm_service
+        self._speaking = False
+        self._started = False
+        self._transitioning_turn = False
+        self._session_active = True
+        self._start_lock = asyncio.Lock()
+        self._fallback_task: asyncio.Task | None = None
+        self.group = GroupInterviewSession(
+            session_id=session_id,
+            job_role=job_role,
+            participants=[
+                ParticipantInterviewSession(
+                    member_id=int(participant["memberId"]),
+                    identity=participant["identity"],
+                    name=participant.get("name", participant["identity"]),
+                    interview=InterviewSession(
+                        session_id=session_id,
+                        job_role=job_role,
+                        resume_text=participant.get("resumeText") or fallback_resume_text,
+                        cover_letter_text=cover_letter_text,
+                        system_prompt=llm_service.build_system_prompt(
+                            job_role,
+                            participant.get("resumeText") or fallback_resume_text,
+                        ),
+                    ),
+                )
+                for participant in participants
+            ],
+        )
+
+    async def _say(self, text: str) -> None:
+        self._speaking = True
+        try:
+            try:
+                await self.session.say(text, allow_interruptions=False)
+                return
+            except TypeError:
+                pass
+
+            try:
+                await self.session.say(text, allow_barge_in=False)
+                return
+            except TypeError:
+                pass
+
+            try:
+                await self.session.say(text, interruptible=False)
+                return
+            except TypeError:
+                pass
+
+            await self.session.say(text)
+        except RuntimeError as e:
+            self._session_active = False
+            logger.warning("[GROUP TTS skipped] session is not active: %s", e)
+        finally:
+            self._speaking = False
+
+    def mark_session_inactive(self) -> None:
+        self._session_active = False
+
+    async def on_enter(self) -> None:
+        """GROUP: STT/Data 핸들러 등록 후 START 또는 fallback 시작을 기다린다."""
+
+        @self.session.on("user_input_transcribed")
+        def _on_user_transcribed(ev):
+            if self._speaking or not self._started or self._transitioning_turn:
+                return
+            transcript = getattr(ev, "transcript", "")
+            if getattr(ev, "is_final", True) and transcript:
+                try:
+                    participant = self.group.current_participant()
+                except RuntimeError:
+                    logger.debug("[GROUP STT ignored] no active participants remain")
+                    return
+                participant.interview.append_to_buffer(transcript)
+                logger.info(
+                    "[GROUP STT 확정] target=%s text=%s",
+                    participant.identity,
+                    transcript,
+                )
+            else:
+                logger.debug("[GROUP STT 중간] %s", transcript)
+
+        room = self.session.room_io.room
+
+        @room.on("data_received")
+        def _on_data_received(packet, *args, **kwargs):
+            try:
+                data = packet.data if hasattr(packet, "data") else packet
+                msg = json.loads(
+                    data.decode("utf-8") if isinstance(data, bytes) else str(data)
+                )
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                logger.warning("GROUP Data Message 파싱 실패: %s", e)
+                return
+
+            msg_type = msg.get("type", "")
+            payload = msg.get("payload", {})
+
+            if msg_type == "START":
+                asyncio.ensure_future(self._handle_start(payload))
+            elif msg_type == "NEXT":
+                asyncio.ensure_future(self._handle_next(payload))
+            elif msg_type == "END":
+                asyncio.ensure_future(self._handle_end(payload))
+            elif msg_type == "PARTICIPANT_LEFT":
+                asyncio.ensure_future(self._handle_participant_left(payload))
+            else:
+                logger.debug("GROUP 알 수 없는 Data Message type: %s", msg_type)
+
+        self._fallback_task = asyncio.create_task(self._start_after_fallback_delay())
+
+    async def _start_after_fallback_delay(self) -> None:
+        await asyncio.sleep(GROUP_START_FALLBACK_SECONDS)
+        if self._started:
+            return
+        logger.warning(
+            "[GROUP START fallback] START 미수신 — metadata participants 기준으로 시작"
+        )
+        await self._start_interview(source="fallback")
+
+    async def _handle_start(self, payload: dict) -> None:
+        if not self._session_active:
+            logger.warning("[GROUP START ignored] agent session is inactive")
+            return
+
+        if self._started:
+            logger.info("[GROUP START 무시] 이미 시작됨")
+            return
+
+        target_identity = payload.get("targetIdentity")
+        logger.info("[GROUP START 수신] targetIdentity=%s", target_identity)
+        await self._start_interview(source="start")
+
+    async def _start_interview(self, source: str) -> None:
+        async with self._start_lock:
+            if self._started:
+                return
+            if not self.group.participants:
+                logger.error("[GROUP 시작 실패] participants 없음")
+                return
+            await self._wait_for_group_participants()
+
+            self.group.start_new_round()
+            self.group.current_turn_number = 1
+            self.group.follow_up_active = False
+            self._started = True
+            logger.info(
+                "[GROUP 시작] source=%s round=%d order=%s",
+                source,
+                self.group.round_number,
+                [
+                    self.group.participants[index].identity
+                    for index in self.group.round_order
+                ],
+            )
+            await self._ask_current_participant(
+                turn_number=self.group.current_turn_number,
+                is_follow_up=False,
+            )
+
+    async def _ask_current_participant(
+        self,
+        turn_number: int,
+        is_follow_up: bool,
+        focus_point: str = "",
+    ) -> None:
+        try:
+            participant = self.group.current_participant()
+        except RuntimeError:
+            logger.info("[GROUP question skipped] no active participants remain")
+            try:
+                self.session.shutdown()
+            except RuntimeError:
+                pass
+            return
+        interview = participant.interview
+
+        try:
+            if is_follow_up:
+                result = await self._llm_service.generate_follow_up(
+                    interview,
+                    focus_point,
+                )
+            elif interview.history:
+                result = await self._llm_service.generate_next_topic(interview)
+            else:
+                result = await self._llm_service.generate_first_question(interview)
+        except Exception as e:
+            logger.exception("GROUP 질문 생성 실패: %s", e)
+            await self._say(
+                "죄송합니다, 잠시 문제가 생겼습니다. 다음 질문으로 넘어가겠습니다."
+            )
+            self._transitioning_turn = False
+            return
+
+        if interview.history:
+            interview.history[-1].turn_number = turn_number
+
+        logger.info(
+            "[GROUP 질문] turn=%d target=%s follow_up=%s question=%s",
+            turn_number,
+            participant.identity,
+            is_follow_up,
+            result["question"],
+        )
+        await self._publish_question(result, participant, turn_number, is_follow_up)
+        await self._say(result["question"])
+        self._transitioning_turn = False
+
+    async def _wait_for_group_participants(self) -> None:
+        """metadata의 그룹 참가자가 LiveKit room에 들어올 때까지 기다린다."""
+        room = self.session.room_io.room
+        required = {participant.identity for participant in self.group.participants}
+        deadline = asyncio.get_running_loop().time() + GROUP_PARTICIPANT_WAIT_SECONDS
+
+        while True:
+            joined = set(room.remote_participants.keys())
+            missing = required - joined
+            if not missing:
+                logger.info("[GROUP 참가자 입장 확인] participants=%s", sorted(joined))
+                return
+
+            if asyncio.get_running_loop().time() >= deadline:
+                logger.warning(
+                    "[GROUP 참가자 입장 대기 timeout] missing=%s joined=%s",
+                    sorted(missing),
+                    sorted(joined),
+                )
+                return
+
+            await asyncio.sleep(0.2)
+
+    async def _publish_question(
+        self,
+        result: dict,
+        participant: ParticipantInterviewSession,
+        turn_number: int,
+        is_follow_up: bool,
+    ) -> None:
+        """GROUP QUESTION Data Message를 Room에 publish한다.
+
+        parent 탐색 규칙:
+        - _ask_current_participant() 에서 interview.history[-1].turn_number = turn_number
+          로 덮어쓴 뒤 이 메서드가 호출된다.
+        - history[-1] 이 방금 추가된 새 질문이므로 history[:-1] 에서 역순 탐색한다.
+        - ConversationTurn.turn_number 를 직접 사용한다.
+        """
+        try:
+            await update_current_speaker(
+                session_id=self.group.session_id,
+                turn_number=turn_number,
+                member_id=participant.member_id,
+                identity=participant.identity,
+            )
+
+            parent_turn_number = 0
+            history = participant.interview.history
+            if is_follow_up and len(history) >= 2:
+                # 방금 추가된 새 질문(history[-1])을 제외하고 역순 탐색
+                for turn in reversed(history[:-1]):
+                    if not getattr(turn, "is_follow_up", False):
+                        parent_turn_number = getattr(turn, "turn_number", 0)
+                        break
+
+            payload = {
+                "type": "QUESTION",
+                "payload": {
+                    "turnNumber": turn_number,
+                    "text": result["question"],
+                    "intent": result.get("question_types", ""),
+                    "isFollowUp": is_follow_up,
+                    "parentTurnNumber": parent_turn_number,
+                    "targetIdentity": participant.identity,
+                },
+            }
+            await self.session.room_io.room.local_participant.publish_data(
+                payload=json.dumps(payload).encode("utf-8"),
+                reliable=True,
+                topic="interview",
+            )
+            logger.info(
+                "[GROUP QUESTION publish] turn=%d isFollowUp=%s parent=%d target=%s",
+                turn_number,
+                is_follow_up,
+                parent_turn_number,
+                participant.identity,
+            )
+        except Exception as e:
+            logger.warning("[GROUP QUESTION publish 실패] %s — 면접 계속", e)
+
+    async def _handle_participant_left(self, payload: dict) -> None:
+        if not self._session_active:
+            logger.warning("[GROUP PARTICIPANT_LEFT ignored] agent session is inactive")
+            return
+
+        identity = payload.get("identity")
+        if not identity:
+            logger.warning(
+                "[GROUP PARTICIPANT_LEFT ignored] missing identity payload=%s", payload
+            )
+            return
+
+        current_participant = None
+        current_identity = None
+        if self._started and self.group.active_count() > 0:
+            try:
+                current_participant = self.group.current_participant()
+                current_identity = current_participant.identity
+            except RuntimeError:
+                current_identity = None
+
+        is_current_participant_leaving = (
+            self._started
+            and identity == current_identity
+            and current_participant is not None
+            and not self._transitioning_turn
+        )
+
+        removed = self.group.mark_left(identity)
+        if not removed:
+            logger.info(
+                "[GROUP PARTICIPANT_LEFT ignored] unknown/already-left identity=%s", identity
+            )
+            return
+
+        logger.info(
+            "[GROUP participant left] identity=%s active=%d", identity, self.group.active_count()
+        )
+
+        if is_current_participant_leaving:
+            self._transitioning_turn = True
+            await asyncio.sleep(STT_DRAIN_DELAY_SECONDS)
+            interview = current_participant.interview
+            answer = interview.flush_buffer()
+            interview.add_answer(answer)
+            last_turn = interview.history[-1] if interview.history else None
+            if last_turn:
+                await self._save_participant_qna(current_participant, last_turn)
+            logger.info(
+                "[GROUP participant left answer saved] identity=%s answer_len=%d",
+                identity,
+                len(answer),
+            )
+
+        if self.group.active_count() == 0:
+            logger.info(
+                "[GROUP participant left] no active participants; shutdown session=%s",
+                self.group.session_id,
+            )
+            try:
+                self.session.shutdown()
+            except RuntimeError:
+                pass
+            return
+
+        if is_current_participant_leaving:
+            self.group.follow_up_active = False
+            await self._ask_current_participant(
+                turn_number=self.group.current_turn_number,
+                is_follow_up=False,
+            )
+
+    async def _handle_next(self, payload: dict) -> None:
+        if not self._session_active:
+            logger.warning("[GROUP NEXT ignored] agent session is inactive")
+            return
+
+        if not self._started:
+            logger.warning("[GROUP NEXT 무시] 아직 START 전")
+            return
+
+        turn_number = int(payload.get("turnNumber") or self.group.current_turn_number + 1)
+        if turn_number <= self.group.last_processed_next_turn_number:
+            logger.warning("[GROUP NEXT 중복 무시] turnNumber=%d", turn_number)
+            return
+        self.group.last_processed_next_turn_number = turn_number
+        await asyncio.sleep(STT_DRAIN_DELAY_SECONDS)
+        self._transitioning_turn = True
+
+        try:
+            participant = self.group.current_participant()
+        except RuntimeError:
+            logger.info("[GROUP NEXT ignored] no active participants remain")
+            return
+        interview = participant.interview
+        answer = interview.flush_buffer()
+        interview.add_answer(answer)
+        logger.info(
+            "[GROUP 답변 확정] respondent=%s turn=%d answer_len=%d",
+            participant.identity,
+            self.group.current_turn_number,
+            len(answer),
+        )
+
+        last_turn = interview.history[-1] if interview.history else None
+        judgment = None
+        if last_turn:
+            judgment = await self._analyze_participant_turn(participant)
+            asyncio.create_task(self._save_participant_qna(participant, last_turn))
+
+        should_follow_up = (
+            not self.group.follow_up_active
+            and judgment is not None
+            and judgment.decision == "FOLLOW_UP"
+        )
+
+        self.group.current_turn_number = turn_number
+        if should_follow_up:
+            self.group.follow_up_active = True
+            await self._ask_current_participant(
+                turn_number=turn_number,
+                is_follow_up=True,
+                focus_point=judgment.focus_point,
+            )
+            return
+
+        if self.group.follow_up_active:
+            self.group.follow_up_active = False
+        try:
+            self.group.advance_speaker()
+        except RuntimeError:
+            logger.info("[GROUP NEXT stopped] no next active participant")
+            return
+        await self._ask_current_participant(turn_number=turn_number, is_follow_up=False)
+
+    async def _handle_end(self, payload: dict) -> None:
+        reason = payload.get("reason", "UNKNOWN")
+        logger.info("[GROUP END 수신] reason=%s", reason)
+
+        if not self._session_active:
+            logger.warning("[GROUP END ignored] agent session is inactive reason=%s", reason)
+            return
+
+        if self._started and self.group.active_count() > 0:
+            await asyncio.sleep(STT_DRAIN_DELAY_SECONDS)
+            self._transitioning_turn = True
+            participant = self.group.current_participant()
+            interview = participant.interview
+            answer = interview.flush_buffer()
+            interview.add_answer(answer)
+            logger.info(
+                "[GROUP 마지막 답변 확정] respondent=%s answer_len=%d",
+                participant.identity,
+                len(answer),
+            )
+
+            last_turn = interview.history[-1] if interview.history else None
+            if last_turn:
+                await self._analyze_participant_turn(participant)
+                await self._save_participant_qna(participant, last_turn)
+
+        logger.info("[GROUP 면접 종료] session=%s", self.group.session_id)
+        try:
+            self.session.shutdown()
+        except RuntimeError:
+            pass
+
+    async def _analyze_participant_turn(self, participant: ParticipantInterviewSession):
+        try:
+            judgment = await self._llm_service.analyze_last_answer(participant.interview)
+            participant.interview.set_last_turn_analysis(
+                answer_summary=judgment.extracted_claims,
+                decision=judgment.decision,
+                focus_point=judgment.focus_point,
+            )
+            logger.info(
+                "[GROUP answer analysis] respondent=%s decision=%s focus_point=%s",
+                participant.identity,
+                judgment.decision,
+                judgment.focus_point,
+            )
+            return judgment
+        except Exception as e:
+            logger.warning(
+                "GROUP answer analysis failed respondent=%s: %s",
+                participant.identity,
+                e,
+            )
+            return None
+
+    async def _save_participant_qna(
+        self,
+        participant: ParticipantInterviewSession,
+        turn,
+    ) -> bool:
+        return await save_qna(
+            session_id=self.group.session_id,
+            turn_number=turn.turn_number or self.group.current_turn_number,
+            question=turn.question,
+            question_types=turn.question_types,
+            is_follow_up=turn.is_follow_up,
+            answer=turn.answer,
+            answer_summary=turn.answer_summary,
+            follow_up_decision=turn.decision,
+            focus_point=turn.focus_point,
+            respondent_member_id=participant.member_id,
+            parent_turn_number=turn.parent_turn_number if turn.is_follow_up else None,
+        )
+
+
+# ─────────────────────────────────────────────────────────
+# 유틸
+# ─────────────────────────────────────────────────────────
+
 def _extract_last_user_text(chat_ctx: llm_types.ChatContext) -> str:
     """ChatContext 에서 가장 최근 user 메시지의 텍스트를 반환."""
     for item in reversed(chat_ctx.items):
@@ -325,7 +1051,17 @@ def _extract_last_user_text(chat_ctx: llm_types.ChatContext) -> str:
     return ""
 
 
-from livekit.agents import WorkerOptions
+def _create_turn_handling_options() -> TurnHandlingOptions:
+    base = {"endpointing": {"min_delay": 3600.0, "max_delay": 3600.0}}
+    for key in ("allow_interruptions", "allow_barge_in", "barge_in", "interruptible"):
+        candidate = dict(base)
+        candidate[key] = False
+        try:
+            return TurnHandlingOptions(**candidate)
+        except TypeError:
+            pass
+    return TurnHandlingOptions(**base)
+
 
 # ─────────────────────────────────────────────────────────
 # Worker 정의
@@ -346,21 +1082,25 @@ async def entrypoint(ctx: JobContext) -> None:
     """Room 이 배정될 때마다 호출되는 진입점."""
     metadata = _load_metadata(ctx)
     session_id = metadata["sessionId"]
+    mode = metadata.get("mode", "SOLO").upper()
     job_role = metadata.get("jobRole", "BACKEND")
     resume_text = metadata.get("resumeText", "")
     cover_letter_text = metadata.get("coverLetterText", "")
+    participants = metadata.get("participants", [])
 
     ctx.log_context_fields = {
         "room": ctx.room.name,
         "session_id": session_id,
     }
     logger.info(
-        "[entrypoint] room=%s session=%s job_role=%s resume_len=%d cover_len=%d",
+        "[entrypoint] room=%s session=%s mode=%s job_role=%s resume_len=%d cover_len=%d participants=%d",
         ctx.room.name,
         session_id,
+        mode,
         job_role,
         len(resume_text),
         len(cover_letter_text),
+        len(participants) if isinstance(participants, list) else 0,
     )
 
     llm_service = create_llm_service()
@@ -378,28 +1118,62 @@ async def entrypoint(ctx: JobContext) -> None:
         # 종료가 오히려 방해된다. 턴 전환은 프론트 버튼 또는 1분30초 타이머 같은
         # 외부 트리거로만 수행한다.
         # STT 자체는 계속 돌아가므로 사용자 발화는 실시간으로 수집된다.
-        turn_handling=TurnHandlingOptions(
-            endpointing={"min_delay": 3600.0, "max_delay": 3600.0},
-        ),
+        turn_handling=_create_turn_handling_options(),
     )
 
-    agent = InterviewerAgent(
-        session_id=session_id,
-        job_role=job_role,
-        resume_text=resume_text,
-        cover_letter_text=cover_letter_text,
-        llm_service=llm_service,
-    )
+    if mode == "GROUP":
+        if not isinstance(participants, list) or not participants:
+            logger.error("GROUP metadata participants 가 비어 있어 SOLO fallback 사용")
+            agent = InterviewerAgent(
+                session_id=session_id,
+                job_role=job_role,
+                resume_text=resume_text,
+                cover_letter_text=cover_letter_text,
+                llm_service=llm_service,
+            )
+        else:
+            agent = GroupInterviewerAgent(
+                session_id=session_id,
+                job_role=job_role,
+                participants=participants,
+                fallback_resume_text=resume_text,
+                cover_letter_text=cover_letter_text,
+                llm_service=llm_service,
+            )
+    else:
+        agent = InterviewerAgent(
+            session_id=session_id,
+            job_role=job_role,
+            resume_text=resume_text,
+            cover_letter_text=cover_letter_text,
+            llm_service=llm_service,
+        )
 
     # 사용자 참가 대기 (§9.3: Frontend가 Room 접속 전에 발화하면 첫 질문을 놓침)
     await ctx.wait_for_participant()
 
-    await session.start(
-        agent=agent,
-        room=ctx.room,
-        room_input_options=RoomInputOptions(),
-        room_output_options=RoomOutputOptions(),
-    )
+    session_closed_cleanly = False
+    failure_reason = ""
+    try:
+        await session.start(
+            agent=agent,
+            room=ctx.room,
+            room_input_options=RoomInputOptions(),
+            room_output_options=RoomOutputOptions(),
+        )
+        session_closed_cleanly = True
+    except Exception as e:
+        failure_reason = str(e) or e.__class__.__name__
+        logger.exception("[AgentSession failed] session=%s reason=%s", session_id, failure_reason)
+    finally:
+        if not session_closed_cleanly:
+            mark_inactive = getattr(agent, "mark_session_inactive", None)
+            if callable(mark_inactive):
+                mark_inactive()
+            await notify_session_failed(
+                session_id=session_id,
+                reason=failure_reason or "AgentSession closed unexpectedly",
+            )
 
 
 if __name__ == "__main__":

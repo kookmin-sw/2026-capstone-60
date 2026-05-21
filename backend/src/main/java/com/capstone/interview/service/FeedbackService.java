@@ -1,20 +1,22 @@
 package com.capstone.interview.service;
 
+import com.capstone.interview.dto.FeedbackListDto;
 import com.capstone.interview.dto.FeedbackResponse;
 import com.capstone.interview.dto.QAPair;
-import com.capstone.interview.entity.Interview;
-import com.capstone.interview.entity.InterviewQna;
-import com.capstone.interview.entity.InterviewStatus;
+import com.capstone.interview.entity.*;
+import com.capstone.interview.exception.UnauthorizedException;
+import com.capstone.interview.repository.InterviewParticipantRepository;
 import com.capstone.interview.repository.InterviewQnaRepository;
 import com.capstone.interview.repository.InterviewRepository;
+import com.capstone.interview.repository.MemberRepository;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import com.capstone.interview.entity.Member;
-import com.capstone.interview.exception.UnauthorizedException;
-import com.capstone.interview.repository.MemberRepository;
 
-import com.capstone.interview.dto.FeedbackListDto;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 @Service
@@ -23,87 +25,166 @@ public class FeedbackService {
 
     private final InterviewRepository interviewRepository;
     private final InterviewQnaRepository interviewQnaRepository;
+    private final InterviewParticipantRepository participantRepository;
     private final MemberRepository memberRepository;
+    private final ObjectMapper objectMapper;
 
-
-    /**
-     * 면접 결과 피드백 조회
-     */
     @Transactional(readOnly = true)
-    public FeedbackResponse getFeedback(String sessionId) {
-        // 1. 면접 정보 조회
+    public FeedbackResponse getFeedback(String sessionId, String loginId) {
         Interview interview = interviewRepository.findBySessionId(sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 면접 세션입니다: " + sessionId));
 
-        // 2. 피드백 생성 여부 체크 (null이면 생성 중으로 판단)
-        String rawFeedback = interview.getTotalFeedback();
-        if (rawFeedback == null) {
-            return FeedbackResponse.builder()
-                    .success(false)
-                    .totalFeedback("AI 피드백이 생성 중입니다. 잠시 후 다시 시도해주세요.")
-                    .build();
+        Member member = memberRepository.findByLoginId(loginId)
+                .orElseThrow(() -> new UnauthorizedException("회원 정보를 찾을 수 없습니다."));
+
+        if (interview.isGroupMode()) {
+            InterviewParticipant participant = participantRepository
+                    .findByInterviewAndMember(interview, member)
+                    .orElseThrow(() -> new UnauthorizedException("이 면접의 참가자가 아닙니다."));
+
+            String rawFeedback = participant.getTotalFeedback();
+            List<InterviewQna> qnas = interviewQnaRepository
+                    .findByInterviewAndRespondentMemberIdOrderBySequenceNumberAsc(interview, member.getId());
+
+            if (interview.getStatus() == InterviewStatus.FAILED) {
+                return failedFeedbackResponse();
+            }
+
+            if (rawFeedback == null) {
+                return FeedbackResponse.builder()
+                        .success(false)
+                        .status(interview.getStatus() == InterviewStatus.COMPLETED || participant.hasLeft()
+                                ? "EVALUATING"
+                                : interview.getStatus().name())
+                        .totalFeedback(interview.getStatus() == InterviewStatus.COMPLETED || participant.hasLeft()
+                                ? "AI 피드백을 생성 중입니다. 잠시 후 다시 시도해주세요."
+                                : "면접이 아직 종료되지 않았습니다.")
+                        .qaPairs(List.of())
+                        .build();
+            }
+
+            if (qnas.isEmpty()) {
+                return FeedbackResponse.builder()
+                        .success(true)
+                        .status("COMPLETED")
+                        .totalFeedback(rawFeedback)
+                        .overallScore(extractOverallScore(rawFeedback))
+                        .competencyChart(extractChartData(rawFeedback))
+                        .qaPairs(List.of())
+                        .build();
+            }
+
+            return buildFeedbackResponse(rawFeedback, qnas);
         }
 
-        // 3. 질문-답변 리스트 조회
+        String rawFeedback = interview.getTotalFeedback();
         List<InterviewQna> qnas = interviewQnaRepository
                 .findByInterviewOrderBySequenceNumberAsc(interview);
 
-        // 4. QAPair 리스트 변환 로직
-        List<QAPair> qaPairs = qnas.stream()
-                .map(qna -> QAPair.builder()
-                        .sequenceNumber(qna.getSequenceNumber())
-                        .questionContent(qna.getQuestionContent())
-                        .answerContent(qna.getAnswerContent())
-                        .modelAnswer(qna.getModelAnswer())
-                        .individualFeedback(qna.getIndividualFeedback())
-                        .isFollowUp(qna.isFollowUp()) // 엔티티의 메서드 사용
-                        .parentSequenceNumber(qna.getParent() != null ? qna.getParent().getSequenceNumber() : null)
-                        .build())
-                .toList();
+        if (interview.getStatus() == InterviewStatus.FAILED) {
+            return failedFeedbackResponse();
+        }
 
-        // 5. 텍스트 데이터 가공 (차트 데이터 분리)
-        String onlyChart = extractChartData(rawFeedback);
-        // [SCORE] 태그 앞부분만 피드백 본문으로 추출
-        String onlyFeedback = rawFeedback.split("\n\n\\[SCORE\\]")[0];
+        if (rawFeedback == null) {
+            return FeedbackResponse.builder()
+                    .success(false)
+                    .status(interview.getStatus() == InterviewStatus.COMPLETED
+                            ? "EVALUATING"
+                            : interview.getStatus().name())
+                    .totalFeedback(interview.getStatus() == InterviewStatus.COMPLETED
+                            ? "AI 피드백을 생성 중입니다. 잠시 후 다시 시도해주세요."
+                            : "면접이 아직 종료되지 않았습니다.")
+                    .qaPairs(List.of())
+                    .build();
+        }
 
-        // 6. 결과 반환 (DTO 포장)
+        return buildFeedbackResponse(rawFeedback, qnas);
+    }
+
+    private FeedbackResponse failedFeedbackResponse() {
         return FeedbackResponse.builder()
-                .success(true)
-                .totalFeedback(onlyFeedback)
-                .overallScore(extractOverallScore(rawFeedback))
-                .competencyChart(onlyChart) // 프론트 전달용 JSON 문자열
-                .qaPairs(qaPairs)
+                .success(false)
+                .status("FAILED")
+                .totalFeedback("AI 면접관 연결 문제로 면접이 중단되었습니다. 새 면접을 시작해주세요.")
+                .qaPairs(List.of())
                 .build();
     }
 
-    // ──────────────────────────────────────────────────────────────────
-    // 면접 기록 목록 조회 (마이페이지)
-    // ──────────────────────────────────────────────────────────────────
-
-    /**
-     * 사용자의 면접 기록 목록 조회
-     */
     @Transactional(readOnly = true)
     public List<FeedbackListDto> getFeedbackList(String loginId) {
         Member member = memberRepository.findByLoginId(loginId)
                 .orElseThrow(() -> new UnauthorizedException("회원 정보를 찾을 수 없습니다."));
-        // 면접 status가 COMPLETED인 상태만 조회
-        List<Interview> interviews = interviewRepository.findByMemberIdAndStatusOrderByCreatedAtDesc(member.getId(), InterviewStatus.COMPLETED);
 
+        List<FeedbackListDto> result = new ArrayList<>();
 
-        return interviews.stream()
-                .map(interview -> FeedbackListDto.builder()
-                        .sessionId(interview.getSessionId())
-                        .category(interview.getCategory())
-                        .overallScore(extractOverallScore(interview.getTotalFeedback()))
-                        .createdAt(interview.getCreatedAt())
-                        .build())
+        List<Interview> owned = interviewRepository.findByMemberIdAndStatusOrderByCreatedAtDesc(
+                member.getId(), InterviewStatus.COMPLETED);
+        for (Interview interview : owned) {
+            if (interview.isGroupMode()) {
+                participantRepository.findByInterviewAndMember(interview, member)
+                        .ifPresent(p -> result.add(toListDto(interview, p.getOverallScore())));
+            } else {
+                result.add(toListDto(interview, extractOverallScore(interview.getTotalFeedback())));
+            }
+        }
+
+        List<InterviewParticipant> participantRecords =
+                participantRepository.findByMemberIdOrderByJoinedAtDesc(member.getId());
+        for (InterviewParticipant p : participantRecords) {
+            if (!p.hasFeedback()) {
+                continue;
+            }
+            Interview interview = p.getInterview();
+            if (interview.getMember() != null && interview.getMember().getId().equals(member.getId())) {
+                continue;
+            }
+            result.add(toListDto(interview, p.getOverallScore()));
+        }
+
+        java.util.Map<String, FeedbackListDto> bySession = new java.util.LinkedHashMap<>();
+        for (FeedbackListDto dto : result) {
+            bySession.putIfAbsent(dto.sessionId(), dto);
+        }
+        return bySession.values().stream()
+                .sorted(Comparator.comparing(FeedbackListDto::createdAt).reversed())
                 .toList();
     }
 
-    /**
-     * [competencyChart] (역량차트) 태그 뒤의 JSON 데이터를 추출하는 헬퍼 메서드
-     */
+    private FeedbackListDto toListDto(Interview interview, String overallScore) {
+        return FeedbackListDto.builder()
+                .sessionId(interview.getSessionId())
+                .category(interview.getCategory())
+                .overallScore(overallScore)
+                .createdAt(interview.getCreatedAt())
+                .build();
+    }
+
+    private FeedbackResponse buildFeedbackResponse(String rawFeedback, List<InterviewQna> qnas) {
+        List<QAPair> qaPairs = qnas.stream()
+                .map(qna -> QAPair.builder()
+                        .sequenceNumber(qna.getSequenceNumber())
+                        .questionContent(qna.getQuestionContent())
+                        .answerContent(parseAnswerSummary(qna))
+                        .modelAnswer(qna.getModelAnswer())
+                        .individualFeedback(qna.getIndividualFeedback())
+                        .isFollowUp(qna.isFollowUp())
+                        .parentSequenceNumber(qna.getParent() != null ? qna.getParent().getSequenceNumber() : null)
+                        .build())
+                .toList();
+
+        String onlyChart = extractChartData(rawFeedback);
+        String onlyFeedback = rawFeedback.split("\n\n\\[SCORE\\]")[0];
+
+        return FeedbackResponse.builder()
+                .success(true)
+                .status("COMPLETED")
+                .totalFeedback(onlyFeedback)
+                .overallScore(extractOverallScore(rawFeedback))
+                .competencyChart(onlyChart)
+                .qaPairs(qaPairs)
+                .build();
+    }
+
     private String extractChartData(String rawData) {
         if (rawData != null && rawData.contains("[CHART]")) {
             return rawData.substring(rawData.indexOf("[CHART]") + "[CHART]".length()).trim();
@@ -111,9 +192,27 @@ public class FeedbackService {
         return "{}";
     }
 
-    /*
-    * [overallScore] 상중하 추출 메소드
-    * */
+    private String parseAnswerSummary(InterviewQna qna) {
+        String summary = qna.getAnswerSummary();
+        if (summary == null || summary.isBlank()) {
+            return qna.getAnswerContent();
+        }
+        try {
+            JsonNode node = objectMapper.readTree(summary);
+            if (node.isArray()) {
+                StringBuilder sb = new StringBuilder();
+                for (JsonNode item : node) {
+                    if (sb.length() > 0) sb.append("\n");
+                    sb.append(item.asText());
+                }
+                return sb.toString();
+            }
+            return summary;
+        } catch (Exception e) {
+            return summary;
+        }
+    }
+
     private String extractOverallScore(String rawFeedback) {
         if (rawFeedback == null || !rawFeedback.contains("[SCORE]")) return null;
         int start = rawFeedback.indexOf("[SCORE]") + "[SCORE]\n".length();

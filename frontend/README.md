@@ -128,6 +128,37 @@ src/
 
 ---
 
+## 면접 시작 위저드 (4단계)
+
+| 단계 | 내용 |
+|:----:|------|
+| 1 | **일반(SOLO)** vs **그룹(GROUP)** 선택 (그룹 시 2~4명) |
+| 2 | **이력서** + **지원 직무** |
+| 3 | **면접 시간** |
+| 4 | **마이크 테스트** → 시작 |
+
+- **SOLO**: `POST /v1/interviews/sessions` (maxParticipants 생략) → 즉시 면접실
+- **GROUP 호스트**: 동일 API + `maxParticipants: 2~4` + `resumeIds` → 로비 → 초대 링크 공유 → `PATCH ready` (join API 호출 안 함)
+- **GROUP 게스트**: 초대 링크 → 로그인 → 본인 이력서 선택 → `POST .../join` `{ resumeId }` → 로비
+
+## 그룹 면접 초대 링크
+
+```
+https://capstonefront.vercel.app/interview/join/{sessionId}
+```
+
+게스트: 링크 접속 → 로그인 → **본인 이력서 필수 선택** → join API → 로비.
+
+프로덕션 HTTPS: `vercel.json`이 `/v1/*`를 백엔드(`http://23.22.137.145:8080`)로 프록시 (Mixed Content 방지). SPA 경로는 `index.html` fallback.
+
+## 피드백 · 기록
+
+- 호스트 면접 종료: `POST .../end` → `POST .../{sessionId}/evaluate`
+- 조회: `GET /v1/interviews/feedbackList`, `GET /v1/interviews/feedback/{sessionId}`
+- `success: false` 응답 시 "피드백 생성 중" UI (폴링 재시도)
+
+---
+
 ## 백엔드 연동 구조
 
 ```

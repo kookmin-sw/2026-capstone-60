@@ -86,4 +86,20 @@ public class ResumeController {
     public ResponseEntity<ResumeResponse> getResume(@PathVariable Long id) {
         return ResponseEntity.ok(resumeService.getResume(id));
     }
+
+    /**
+     * 이력서 삭제.
+     * DELETE /v1/resumes/{id}
+     */
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteResume(
+            Authentication authentication,
+            @PathVariable Long id) {
+
+        String loginId = authentication.getName();
+        log.info("[이력서 삭제] loginId={}, resumeId={}", loginId, id);
+
+        resumeService.deleteResume(loginId, id);
+        return ResponseEntity.noContent().build();
+    }
 }

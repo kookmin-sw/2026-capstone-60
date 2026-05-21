@@ -5,7 +5,7 @@ function formatDate(value) {
   return date.toLocaleString("ko-KR");
 }
 
-export default function HistoryListView({ loading, records, onSelectRecord }) {
+export default function HistoryListView({ loading, records, onSelectRecord, onDeleteRecord }) {
   return (
     <section className="card history-card">
       <div className="header-row">
@@ -29,9 +29,25 @@ export default function HistoryListView({ loading, records, onSelectRecord }) {
                 Score: {record.overallScore ?? "-"} · {formatDate(record.createdAt)}
               </p>
             </div>
-            <button className="ghost-btn" type="button" onClick={() => onSelectRecord(record.sessionId)}>
-              상세 보기
-            </button>
+            <div className="inline-actions">
+              <button className="ghost-btn" type="button" onClick={() => onSelectRecord(record.sessionId)}>
+                상세 보기
+              </button>
+              {onDeleteRecord && (
+                <button
+                  className="ghost-btn"
+                  type="button"
+                  style={{ color: "var(--red-700, #c00)" }}
+                  onClick={() => {
+                    if (window.confirm("이 면접 기록을 삭제하시겠습니까? 삭제 후 복구할 수 없습니다.")) {
+                      onDeleteRecord(record.sessionId);
+                    }
+                  }}
+                >
+                  삭제
+                </button>
+              )}
+            </div>
           </article>
         ))}
       </div>

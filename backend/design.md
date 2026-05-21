@@ -335,6 +335,9 @@ erDiagram
         text answer_content
         boolean is_follow_up
         bigint parent_id FK
+        text answer_summary
+        varchar follow_up_decision
+        text focus_point
         text model_answer
         text individual_feedback
         varchar audio_url
@@ -379,6 +382,9 @@ erDiagram
 - 면접 내 각 질문-답변 쌍
 - `is_follow_up`: 꼬리질문 여부
 - `parent_id`: 꼬리질문인 경우 부모 질문 ID (셀프 참조)
+- `answer_summary`: Agent가 답변 요약 AI로 추출한 핵심 주장 목록(JSON 문자열)
+- `follow_up_decision`: 답변 판단 결과 (`FOLLOW_UP` / `NEXT_QUESTION`)
+- `focus_point`: `FOLLOW_UP` 판단 시 꼬리질문 생성 방향 힌트
 - `model_answer`: LLM이 생성한 모범 답안
 - `individual_feedback`: 해당 질문-답변에 대한 개별 피드백
 - `audio_url`: S3에 저장된 답변 오디오 파일 주소
@@ -448,6 +454,9 @@ CREATE TABLE interview_qnas (
     answer_content TEXT,                                        -- 답변은 나중에 채워짐
     is_follow_up BOOLEAN NOT NULL DEFAULT FALSE,
     parent_id BIGINT REFERENCES interview_qnas(id),
+    answer_summary TEXT,                                        -- Agent answerSummary(JSON string)
+    follow_up_decision VARCHAR(32),                             -- FOLLOW_UP / NEXT_QUESTION
+    focus_point TEXT,                                           -- FOLLOW_UP 판단 시 꼬리질문 방향
     model_answer TEXT,                                          -- 면접 종료 후 LLM 생성
     individual_feedback TEXT,                                   -- 면접 종료 후 LLM 생성
     audio_url VARCHAR(1024),

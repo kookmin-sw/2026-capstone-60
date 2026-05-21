@@ -22,6 +22,9 @@ public class InterviewQna {
     @JoinColumn(name = "interview_id", nullable = false)
     private Interview interview;
 
+    @Column(name = "respondent_member_id")
+    private Long respondentMemberId;
+
     @Column(name = "sequence_number", nullable = false)
     private Integer sequenceNumber;
 
@@ -47,6 +50,15 @@ public class InterviewQna {
     @Column(name = "individual_feedback", columnDefinition = "TEXT")
     private String individualFeedback;
 
+    @Column(name = "answer_summary", columnDefinition = "TEXT")
+    private String answerSummary;
+
+    @Column(name = "follow_up_decision", length = 32)
+    private String followUpDecision;
+
+    @Column(name = "focus_point", columnDefinition = "TEXT")
+    private String focusPoint;
+
     @Column(name = "audio_url", length = 1024)
     private String audioUrl;
 
@@ -70,16 +82,30 @@ public class InterviewQna {
     @Builder
     public InterviewQna(Interview interview, Integer sequenceNumber, String questionContent,
                         String answerContent, boolean isFollowUp, InterviewQna parent,
-                        String intent, LocalDateTime startedAt, LocalDateTime expiresAt) {
+                        String intent, String answerSummary, String followUpDecision,
+                        String focusPoint, LocalDateTime startedAt, LocalDateTime expiresAt,
+                        Long respondentMemberId) {
         this.interview = interview;
+        this.respondentMemberId = respondentMemberId;
         this.sequenceNumber = sequenceNumber;
         this.questionContent = questionContent;
         this.answerContent = answerContent;
         this.isFollowUp = isFollowUp;
         this.parent = parent;
         this.intent = intent;
+        this.answerSummary = answerSummary;
+        this.followUpDecision = followUpDecision;
+        this.focusPoint = focusPoint;
         this.startedAt = startedAt;
         this.expiresAt = expiresAt;
+    }
+
+    public void setRespondentMemberId(Long respondentMemberId) {
+        this.respondentMemberId = respondentMemberId;
+    }
+
+    public void setParent(InterviewQna parent) {
+        this.parent = parent;
     }
 
     public void updateAnswer(String answerContent) {
@@ -90,6 +116,12 @@ public class InterviewQna {
         this.questionContent = questionContent;
         this.intent = intent;
         this.isFollowUp = isFollowUp;
+    }
+
+    public void updateAnswerAnalysis(String answerSummary, String followUpDecision, String focusPoint) {
+        this.answerSummary = answerSummary;
+        this.followUpDecision = followUpDecision;
+        this.focusPoint = focusPoint;
     }
 
     public void updateTimer(LocalDateTime startedAt, LocalDateTime expiresAt) {

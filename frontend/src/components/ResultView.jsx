@@ -57,7 +57,7 @@ export default function ResultView({ result, onRestart, onOpenHistory }) {
               <p>
                 <strong>피드백:</strong> {qa.individualFeedback}
               </p>
-              {qa.isFollowUp && <span className="chip warn">질문 {qa.parentSequenceNumber ?? (qa.sequenceNumber - 1)}번의 꼬리질문입니다.</span>}
+              {(qa.isFollowUp || qa.followUp) && <span className="chip warn">질문 {qa.parentSequenceNumber || (qa.sequenceNumber - 1)}번의 꼬리질문입니다.</span>}
             </article>
           ))}
         </div>

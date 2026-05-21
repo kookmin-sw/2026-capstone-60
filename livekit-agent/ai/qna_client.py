@@ -14,6 +14,7 @@ INTEGRATION_CONTRACT.md §5.5 참조.
 import asyncio
 import logging
 import os
+from typing import Optional
 
 import aiohttp
 
@@ -36,9 +37,14 @@ async def save_qna(
     session_id: str,
     turn_number: int,
     question: str,
-    intent: str,
+    question_types: str,
     is_follow_up: bool,
     answer: str,
+    answer_summary: Optional[list[str]] = None,
+    follow_up_decision: Optional[str] = None,
+    focus_point: Optional[str] = None,
+    respondent_member_id: Optional[int] = None,
+    parent_turn_number: Optional[int] = None,
 ) -> bool:
     """
     단건 QnA를 Backend에 저장한다.
@@ -53,10 +59,16 @@ async def save_qna(
     payload = {
         "turnNumber": turn_number,
         "question": question,
-        "intent": intent,
+        "intent": question_types,
         "isFollowUp": is_follow_up,
+        "parentTurnNumber": parent_turn_number,
         "answer": answer,
+        "answerSummary": answer_summary,
+        "followUpDecision": follow_up_decision,
+        "focusPoint": focus_point,
     }
+    if respondent_member_id is not None:
+        payload["respondentMemberId"] = respondent_member_id
     headers = {"Content-Type": "application/json"}
     if SERVICE_TOKEN:
         headers["X-Service-Token"] = SERVICE_TOKEN
@@ -91,4 +103,75 @@ async def save_qna(
         "[QnA 저장 최종 실패] session=%s turn=%d — 데이터 손실 감수, 면접 계속",
         session_id, turn_number,
     )
+    return False
+
+
+async def update_current_speaker(
+    session_id: str,
+    turn_number: int,
+    member_id: int,
+    identity: str,
+) -> bool:
+    """Tell Backend which participant owns the current turn."""
+    url = f"{BACKEND_INTERNAL_URL}/internal/v1/interviews/sessions/{session_id}/speaker"
+    payload = {
+        "turnNumber": turn_number,
+        "memberId": member_id,
+        "identity": identity,
+    }
+    headers = {"Content-Type": "application/json"}
+    if SERVICE_TOKEN:
+        headers["X-Service-Token"] = SERVICE_TOKEN
+
+    try:
+        async with aiohttp.ClientSession() as client:
+            async with client.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    logger.info(
+                        "[Current speaker 저장 성공] session=%s turn=%d identity=%s",
+                        session_id, turn_number, identity,
+                    )
+                    return True
+                body = await resp.text()
+                logger.warning(
+                    "[Current speaker 저장 실패] session=%s turn=%d status=%d body=%s",
+                    session_id, turn_number, resp.status, body[:200],
+                )
+    except Exception as e:
+        logger.warning(
+            "[Current speaker 저장 예외] session=%s turn=%d identity=%s error=%s",
+            session_id, turn_number, identity, e,
+        )
+    return False
+
+
+async def notify_session_failed(session_id: str, reason: str) -> bool:
+    """Tell Backend that the LiveKit agent can no longer run this interview."""
+    url = f"{BACKEND_INTERNAL_URL}/internal/v1/interviews/sessions/{session_id}/failed"
+    payload = {"reason": reason[:500] if reason else "AgentSession failed"}
+    headers = {"Content-Type": "application/json"}
+    if SERVICE_TOKEN:
+        headers["X-Service-Token"] = SERVICE_TOKEN
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            async with aiohttp.ClientSession() as client:
+                async with client.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    if resp.status == 200:
+                        logger.warning("[Session failure notified] session=%s", session_id)
+                        return True
+                    body = await resp.text()
+                    logger.warning(
+                        "[Session failure notify failed] session=%s status=%d body=%s (%d/%d)",
+                        session_id, resp.status, body[:200], attempt + 1, MAX_RETRIES,
+                    )
+        except Exception as e:
+            logger.warning(
+                "[Session failure notify error] session=%s error=%s (%d/%d)",
+                session_id, e, attempt + 1, MAX_RETRIES,
+            )
+
+        if attempt < MAX_RETRIES - 1:
+            await asyncio.sleep(BASE_DELAY * (2 ** attempt))
+
     return False
