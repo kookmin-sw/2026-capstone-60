@@ -3,16 +3,23 @@ package com.capstone.interview.config;
 import java.util.List;
 
 /**
- * LLM 호출 공통 인터페이스.
- * 모든 LLM 호출 모듈(ResumeService, QuestionGenerator, FollowUpEngine, AnswerEvaluator)은
- * 이 인터페이스를 통해 LLM에 접근한다.
- * 구현체 예시: BedrockClaudeClient, BedrockTitanClient
+ * Common interface for LLM calls.
  */
 public interface LLMClient {
 
-    /** 프롬프트를 보내고 텍스트 응답을 받는다 */
+    /** Sends a single prompt and returns a text response. */
     String invoke(String prompt);
 
-    /** 텍스트를 임베딩 벡터로 변환한다 (RAG 파이프라인용) */
+    /**
+     * Sends stable instructions separately from per-request input.
+     */
+    default String invoke(String systemPrompt, String userPrompt) {
+        if (systemPrompt == null || systemPrompt.isBlank()) {
+            return invoke(userPrompt);
+        }
+        return invoke(systemPrompt + "\n\n" + userPrompt);
+    }
+
+    /** Converts text into an embedding vector. */
     List<Float> embed(String text);
 }
