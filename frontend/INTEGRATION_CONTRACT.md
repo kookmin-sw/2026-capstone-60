@@ -692,3 +692,59 @@ READY ──start()──▶ IN_PROGRESS ──complete()──▶ COMPLETED
 | 2026-05-12 | QnA 저장을 **fire-and-forget 백그라운드 태스크**로 수행하도록 명시. 면접 메인 플로우가 저장 지연/실패에 영향받지 않도록 분리 | Agent 담당 |
 | 2026-05-12 | 흐름 구멍 메꿈: ① STT 버퍼링 규칙(§5.3.1), ② `on_enter` 첫 질문 발화 전 사용자 참가 대기, ③ END 경로만 동기 저장, ④ dispatch 실패 시 `FAILED` 전이, ⑤ Frontend Agent 접속 타임아웃, ⑥ 첫 턴(turnNumber=1) 초기화 규칙 | Agent 담당 |
 | 2026-05-12 | `sendData` 실패 정책 명시: `/next` 는 롤백+500, `/end` 는 `deleteRoom()` 로 정리 후 정상 응답 | Agent 담당 |
+| 2026-05-18 | **그룹 면접 (Backend+Frontend, Agent 미구현)**: `WAITING` 상태, `maxParticipants`, lobby/join/ready API, dispatch `mode=GROUP` + `participants[]`, Room Data `START`, `QUESTION.targetIdentity`, Internal QnA `respondentMemberId`, 참가자별 평가 | Backend+Frontend |
+
+## 11. 그룹 면접 (GROUP mode) — Backend/Frontend 구현 스펙
+
+### 11.1 개요
+- `maxParticipants` = 1 → **SOLO** (기존 흐름: 생성 즉시 `IN_PROGRESS` + Agent dispatch)
+- `maxParticipants` ≥ 2 → **GROUP**: `WAITING` → join → ready → 전원 ready 시 자동 start
+
+### 11.2 REST API (추가)
+| Method | Path | 설명 |
+|--------|------|------|
+| POST | `/v1/interviews/sessions` | body에 `maxParticipants` 추가 |
+| POST | `/v1/interviews/sessions/{sessionId}/join` | body optional `{ resumeId }` |
+| GET | `/v1/interviews/sessions/{sessionId}/lobby` | 대기실 상태 |
+| PATCH | `/v1/interviews/sessions/{sessionId}/participants/me/ready` | 준비 완료 → 조건 충족 시 auto start |
+
+### 11.3 LiveKit identity
+- 면접자: `user-{memberId}` (기존과 동일, 참가자마다 별도 토큰)
+
+### 11.4 Agent dispatch metadata (GROUP)
+```json
+{
+  "mode": "GROUP",
+  "sessionId": "sess-...",
+  "jobRole": "BACKEND",
+  "maxParticipants": 2,
+  "participants": [
+    { "memberId": 1, "identity": "user-1", "name": "...", "resumeText": "..." }
+  ],
+  "totalDurationSeconds": 900,
+  "answerTimeLimitSeconds": 90
+}
+```
+
+### 11.5 Room Data Messages (Agent 구현 필요)
+- **START** (Backend → Room, auto start 시):
+  `{ "type": "START", "payload": { "participants": [...], "currentSpeakerIndex": 0, "targetIdentity": "user-1" } }`
+- **QUESTION** (Agent → Room):
+  `{ "type": "QUESTION", "payload": { "turnNumber": 1, "text": "...", "targetIdentity": "user-1" } }`
+- **NEXT** (Backend → Room): payload에 `targetIdentity` optional
+
+### 11.6 Internal QnA
+- `POST /internal/v1/interviews/sessions/{sessionId}/qnas` body에 `respondentMemberId` 추가
+
+### 11.7 평가·피드백
+- `POST /{sessionId}/evaluate` → GROUP 시 참가자별 `evaluateAllParticipants`
+- `GET /feedback/{sessionId}` → 로그인 사용자 본인 participant 피드백만
+- `interview_participants.total_feedback` / `overall_score` 에 저장
+
+### 11.8 Agent 미구현 체크리스트
+| 상태 | 작업 |
+|------|------|
+| ❌ | `START` 수신 후 첫 `QUESTION` (첫 화자 `targetIdentity`) |
+| ❌ | 화자 순환: 다음 화자에게 `QUESTION` + `targetIdentity` |
+| ❌ | 활성 화자 STT만 수집 (또는 한 명만 publish 정책과 정합) |
+| ❌ | QnA upsert 시 `respondentMemberId` 포함 |

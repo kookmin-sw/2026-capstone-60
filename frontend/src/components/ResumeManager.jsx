@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getMyResumes, uploadPdfResume } from "../api/resumeApi";
+import { getMyResumes, uploadPdfResume, deleteResume } from "../api/resumeApi";
 
 /**
  * 마이페이지용 이력서 관리 컴포넌트.
@@ -121,6 +121,21 @@ export default function ResumeManager() {
                   {resume.originalText && ` · ${resume.originalText.length}자`}
                 </p>
               </div>
+              <button
+                className="ghost-btn"
+                type="button"
+                onClick={async () => {
+                  if (!window.confirm(`"${resume.title}" 이력서를 삭제하시겠습니까?`)) return;
+                  try {
+                    await deleteResume(resume.id);
+                    await loadResumes();
+                  } catch (err) {
+                    setError(err.message || "삭제에 실패했습니다.");
+                  }
+                }}
+              >
+                삭제
+              </button>
             </article>
           ))}
         </div>

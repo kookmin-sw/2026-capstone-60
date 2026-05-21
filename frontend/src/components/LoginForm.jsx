@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 export default function LoginForm({ onLogin, loading }) {
+  const [searchParams] = useSearchParams();
   const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
   const navigate = useNavigate();
@@ -55,7 +56,14 @@ export default function LoginForm({ onLogin, loading }) {
           <button
             type="button"
             className="link-btn"
-            onClick={() => navigate("/signup")}
+            onClick={() => {
+              const redirect = searchParams.get("redirect");
+              navigate(
+                redirect
+                  ? `/signup?redirect=${encodeURIComponent(redirect)}`
+                  : "/signup"
+              );
+            }}
           >
             회원가입
           </button>

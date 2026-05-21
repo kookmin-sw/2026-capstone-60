@@ -13,7 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Room, RoomEvent } from "livekit-client";
 import useCountdown from "../hooks/useCountdown";
 import useNextQuestionGuard from "../hooks/useNextQuestionGuard";
-import { nextQuestion } from "../api/interviewApi";
+import { getInterviewResult, nextQuestion } from "../api/interviewApi";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import InterviewRoomView from "./InterviewRoomView";
@@ -26,10 +26,18 @@ const EXPIRES_AT_FALLBACK_THRESHOLD_MS = 5000;
 // 화면에 표시하지 않는 로그 타입 (시스템 메시지 등)
 const HIDDEN_LOG_TYPES = new Set(["SYSTEM"]);
 
-export default function InterviewRoom({ session, onSessionEnd, ending }) {
+export default function InterviewRoom({
+  session,
+  onSessionEnd,
+  onSessionLeave,
+  onGuestFeedbackReady,
+  ending,
+}) {
   const roomRef = useRef(null);
+  const myIdentityRef = useRef("");
   const [isConnected, setIsConnected] = useState(false);
   const [isMicOn, setIsMicOn] = useState(true);
+  const [localIdentity, setLocalIdentity] = useState("");
   const [connectionError, setConnectionError] = useState("");
   const [warningVisible, setWarningVisible] = useState(false);
   const [turn, setTurn] = useState(1);
@@ -40,6 +48,12 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
   const [logs, setLogs] = useState([]);
   // 단순 휴리스틱: 면접관 발화 직후 잠시 "ai", 그 외엔 "user"
   const [currentTurnRole, setCurrentTurnRole] = useState("waiting");
+  const [targetIdentity, setTargetIdentity] = useState(null);
+
+  const isGroup = session.mode === "GROUP";
+  const myIdentity = session.myIdentity || localIdentity;
+  myIdentityRef.current = myIdentity || "";
+  const isMyActiveTurn = !isGroup || !targetIdentity || targetIdentity === myIdentity;
 
   const answerTimeLimitSeconds = session.answerTimeLimitSeconds || 90;
   const totalDurationSeconds = session.totalDurationSeconds || session.durationMinutes * 60;
@@ -56,6 +70,31 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
     turnRef.current = next;
     setTurn(next);
   }, []);
+
+  const setLocalMicPublish = useCallback(async (enabled) => {
+    const room = roomRef.current;
+    if (!room || session.livekit?.isMock) {
+      setIsMicOn(enabled);
+      return;
+    }
+
+    try {
+      await room.localParticipant.setMicrophoneEnabled(enabled);
+      setIsMicOn(enabled);
+    } catch (error) {
+      console.warn("[InterviewRoom] microphone publish update failed", error);
+      addLog("WARN", "마이크 상태 변경에 실패했습니다. 브라우저 권한 또는 장치 상태를 확인해주세요.");
+    }
+  }, [session.livekit?.isMock]);
+
+  const syncMicPublishForTarget = useCallback(async (nextTargetIdentity) => {
+    if (!isGroup) {
+      await setLocalMicPublish(true);
+      return;
+    }
+
+    await setLocalMicPublish(Boolean(nextTargetIdentity) && nextTargetIdentity === myIdentityRef.current);
+  }, [isGroup, setLocalMicPublish]);
 
   function addLog(type, text) {
     setLogs((prev) => [
@@ -113,24 +152,56 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
   const handleDataReceived = useCallback((payload) => {
     try {
       const msg = JSON.parse(new TextDecoder().decode(payload));
+      if (msg.type === "NEXT") {
+        const { turnNumber } = msg.payload || {};
+        if (typeof turnNumber === "number") updateTurn(turnNumber);
+        void setLocalMicPublish(false);
+        setCurrentQuestion("");
+        setWaitingForAgent(false);
+        setAgentTimedOut(false);
+        setWarningVisible(false);
+        setAnswerExpiresAt(null);
+        setTargetIdentity(null);
+        setCurrentTurnRole("ai");
+        addLog("SYSTEM", `다음 질문을 준비 중입니다. (Q${turnNumber ?? turnRef.current})`);
+        return;
+      }
+
+      if (msg.type === "PARTICIPANT_LEFT") {
+        const { identity } = msg.payload || {};
+        if (identity && identity !== myIdentityRef.current) {
+          addLog("SYSTEM", `${identity} 님이 면접에서 나갔습니다.`);
+        }
+        return;
+      }
+
       if (msg.type === "QUESTION") {
-        const { turnNumber, text } = msg.payload;
+        const { turnNumber, text, targetIdentity: target } = msg.payload || {};
         if (typeof turnNumber === "number" && turnNumber !== turnRef.current) {
           console.warn(`[InterviewRoom] 턴 번호 불일치: client=${turnRef.current}, agent=${turnNumber}.`);
           addLog("WARN", `턴 번호 불일치 감지 (서버=${turnRef.current}, 면접관=${turnNumber}). 면접관 값으로 갱신합니다.`);
           updateTurn(turnNumber);
         }
+        setTargetIdentity(target || null);
+        const isMyTurn = !target || !myIdentity || target === myIdentity;
         setCurrentQuestion(text);
         setWaitingForAgent(false);
         setWarningVisible(false);
-        setAnswerExpiresAt(Date.now() + answerTimeLimitSeconds * 1000);
-        setCurrentTurnRole("user");
+        if (isMyTurn) {
+          setAnswerExpiresAt(Date.now() + answerTimeLimitSeconds * 1000);
+          setCurrentTurnRole("user");
+        } else {
+          setAnswerExpiresAt(null);
+          setCurrentTurnRole("waiting");
+          addLog("SYSTEM", `답변 차례: ${target}`);
+        }
+        syncMicPublishForTarget(target);
         addLog("AI", `Q${turnNumber}. ${text}`);
       }
     } catch (e) {
       // 파싱 실패 시 무시
     }
-  }, [answerTimeLimitSeconds, updateTurn]);
+  }, [answerTimeLimitSeconds, syncMicPublishForTarget, updateTurn, myIdentity, setLocalMicPublish]);
 
   useEffect(() => {
     if (session.livekit?.isMock) {
@@ -147,7 +218,9 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
     async function connectRoom() {
       try {
         await room.connect(session.livekit.url, session.livekit.accessToken);
-        await room.localParticipant.setMicrophoneEnabled(true);
+        setLocalIdentity(room.localParticipant.identity);
+        myIdentityRef.current = session.myIdentity || room.localParticipant.identity;
+        await setLocalMicPublish(!isGroup);
         setIsConnected(true);
       } catch (error) {
         setConnectionError(error.message || "LiveKit 연결에 실패했습니다.");
@@ -160,7 +233,11 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
         const audioEl = track.attach();
         audioEl.id = `audio-${participant.identity}`;
         document.body.appendChild(audioEl);
-        setCurrentTurnRole("ai");
+        if (participant.identity?.startsWith("user-")) {
+          addLog("USER", `참가자 음성 연결: ${participant.identity}`);
+        } else {
+          setCurrentTurnRole("ai");
+        }
       }
     });
     room.on(RoomEvent.TrackUnsubscribed, (track) => {
@@ -205,10 +282,13 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
     return () => clearTimeout(timeout);
   }, [isConnected, waitingForAgent, session.livekit?.isMock]);
 
+  const isHost = session.role === "HOST";
+
   const requestNextQuestion = async () => {
-    if (!canAskNextQuestion || ending) return;
+    if (!currentQuestion || !isMyActiveTurn || !canAskNextQuestion || ending) return;
     if (!nextGuard.tryAcquire()) return;
     setNextLoading(true);
+    await setLocalMicPublish(false);
     setCurrentTurnRole("ai");
     // 다음 질문이 발화될 때까지 화면을 "대기" 상태로 (질문 텍스트 비우고 타이머 --:--)
     setCurrentQuestion("");
@@ -255,17 +335,69 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
       onSessionEnd("TIME_OVER");
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canAskNextQuestion, answerTimer.secondsLeft, ending]);
+  }, [canAskNextQuestion, answerTimer.secondsLeft, ending, isGroup, isHost]);
+
+  // 게스트: 호스트가 면접 종료·평가 후 본인 피드백 자동 수신
+  useEffect(() => {
+    if (!isGroup || isHost || !session?.sessionId || !onGuestFeedbackReady) return undefined;
+
+    let disposed = false;
+    const poll = async () => {
+      try {
+        const response = await getInterviewResult(session.sessionId);
+        if (disposed || response?.pending || !response?.data) return;
+        roomRef.current?.disconnect();
+        onGuestFeedbackReady(response.data);
+      } catch {
+        // 평가 전 — 무시하고 재시도
+      }
+    };
+
+    const intervalId = window.setInterval(poll, 8000);
+    poll();
+    return () => {
+      disposed = true;
+      window.clearInterval(intervalId);
+    };
+  }, [isGroup, isHost, session?.sessionId, onGuestFeedbackReady]);
 
   const toggleMic = async () => {
     if (session.livekit?.isMock) { setIsMicOn((prev) => !prev); return; }
     if (!roomRef.current) return;
+    if (isGroup && (!targetIdentity || targetIdentity !== myIdentity || !currentQuestion || currentTurnRole !== "user")) {
+      await setLocalMicPublish(false);
+      return;
+    }
     const next = !isMicOn;
-    await roomRef.current.localParticipant.setMicrophoneEnabled(next);
-    setIsMicOn(next);
+    await setLocalMicPublish(next);
   };
 
-  const endInterview = async () => { await onSessionEnd("USER_STOP"); };
+  const endInterview = async () => {
+    if (isGroup && isHost) {
+      const ok = window.confirm(
+        "면접을 종료하면 모든 참가자의 평가가 시작됩니다. 종료하시겠습니까?"
+      );
+      if (!ok) return;
+      roomRef.current?.disconnect();
+      await onSessionEnd("USER_STOP");
+      return;
+    }
+
+    if (isGroup && !isHost) {
+      const ok = window.confirm(
+        "지금 나가면 현재까지의 답변으로 개인 피드백을 생성합니다.\n" +
+          "남은 참가자의 면접은 계속 진행됩니다.\n" +
+          "그래도 나가시겠습니까?"
+      );
+      if (!ok) return;
+      roomRef.current?.disconnect();
+      await onSessionLeave?.();
+      return;
+    }
+
+    roomRef.current?.disconnect();
+    await onSessionEnd("USER_STOP");
+  };
 
   // ── 대기 화면 ──────────────────────────────────────────────
   if (waitingForAgent && !session.livekit?.isMock) {
@@ -337,10 +469,22 @@ export default function InterviewRoom({ session, onSessionEnd, ending }) {
       errorMessage=""
 
       isMicOn={isMicOn}
+      isMicToggleDisabled={Boolean(
+        isGroup &&
+        (!targetIdentity || targetIdentity !== myIdentity || !currentQuestion || currentTurnRole !== "user")
+      )}
       onToggleMic={toggleMic}
       onNextQuestion={requestNextQuestion}
       onEndInterview={endInterview}
-      canAskNext={canAskNextQuestion}
+      isHost={isHost}
+      canAskNext={
+        Boolean(currentQuestion) &&
+        isMyActiveTurn &&
+        canAskNextQuestion
+      }
+      targetIdentity={targetIdentity}
+      myIdentity={myIdentity}
+      isGroup={isGroup}
       nextLoading={nextLoading}
       ending={ending}
 

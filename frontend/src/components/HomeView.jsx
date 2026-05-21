@@ -1,8 +1,34 @@
+import { useEffect, useState } from "react";
 import FortuneCookie from "./FortuneCookie";
 
 export default function HomeView({ user, onStartInterview, onLogin, onOpenHistory }) {
+  const [leaveNotice, setLeaveNotice] = useState("");
+
+  useEffect(() => {
+    const notice = sessionStorage.getItem("groupLeaveNotice");
+    if (notice) {
+      setLeaveNotice(notice);
+      sessionStorage.removeItem("groupLeaveNotice");
+    }
+  }, []);
+
   return (
     <div className="home-card">
+      {leaveNotice && (
+        <div className="notice" style={{ marginBottom: "1rem" }}>
+          {leaveNotice}
+          {user && (
+            <button
+              type="button"
+              className="ghost-btn"
+              style={{ marginLeft: "0.75rem" }}
+              onClick={onOpenHistory}
+            >
+              면접 기록 보기
+            </button>
+          )}
+        </div>
+      )}
       <div className="home-hero">
         <p className="eyebrow">Realtime AI Mock Interview</p>
         <h1>실전처럼 연습하는<br />AI 모의면접</h1>
