@@ -1,13 +1,13 @@
 html {
   scroll-behavior: smooth;
   background: #f8fafc;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 body {
   min-width: 320px;
   margin: 0;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 a {
