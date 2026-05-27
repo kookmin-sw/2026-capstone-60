@@ -96,7 +96,7 @@
   .page-shell {
     position: relative;
     isolation: isolate;
-    overflow: hidden;
+    overflow: clip;
   }
 
   .page-content {
@@ -398,18 +398,138 @@
     color: #475569;
   }
 
-  .screen-card::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background: linear-gradient(135deg, rgba(59, 130, 246, 0.08), transparent 42%, rgba(253, 230, 138, 0.16));
-    opacity: 0;
-    transition: opacity 0.24s ease;
+  .journey-steps {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    border-block: 1px solid rgba(147, 197, 253, 0.52);
   }
 
-  .screen-card:hover::before {
+  .journey-step {
+    position: relative;
+    display: flex;
+    min-height: 6.25rem;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 0.45rem;
+    padding: 1.15rem 1.35rem;
+    border-left: 1px solid rgba(147, 197, 253, 0.38);
+    background: transparent;
+    text-align: left;
+    transition:
+      background-color 0.2s ease,
+      color 0.2s ease;
+  }
+
+  .journey-step:first-child {
+    border-left: 0;
+  }
+
+  .journey-step::after {
+    content: "";
+    position: absolute;
+    right: 1.35rem;
+    bottom: -1px;
+    left: 1.35rem;
+    height: 2px;
+    background: #2563eb;
+    opacity: 0;
+    transform: scaleX(0.4);
+    transition:
+      opacity 0.2s ease,
+      transform 0.22s ease;
+  }
+
+  .journey-step:hover,
+  .journey-step:focus-visible,
+  .journey-step-active {
+    background: rgba(239, 246, 255, 0.76);
+  }
+
+  .journey-step:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: -2px;
+  }
+
+  .journey-step-active::after {
     opacity: 1;
+    transform: scaleX(1);
+  }
+
+  .journey-step-number {
+    font-size: 0.78rem;
+    font-weight: 900;
+    letter-spacing: 0.12em;
+    color: #2563eb;
+  }
+
+  .journey-step-title {
+    font-size: 1.08rem;
+    font-weight: 900;
+    color: #0f172a;
+  }
+
+  .journey-display {
+    min-height: 41rem;
+  }
+
+  .journey-detail-copy {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    margin-bottom: 1.6rem;
+  }
+
+  .journey-detail-number {
+    font-size: 0.78rem;
+    font-weight: 900;
+    letter-spacing: 0.15em;
+    color: #2563eb;
+  }
+
+  .journey-detail-copy h3 {
+    flex-shrink: 0;
+    font-size: 1.6rem;
+    font-weight: 900;
+    color: #0f172a;
+  }
+
+  .journey-detail-copy p {
+    padding-left: 1.1rem;
+    border-left: 1px solid rgba(147, 197, 253, 0.65);
+    font-size: 0.96rem;
+    line-height: 1.75;
+    color: #475569;
+  }
+
+  .journey-media {
+    width: min(100%, 66rem);
+    margin-inline: auto;
+  }
+
+  .journey-media img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border: 1px solid rgba(191, 219, 254, 0.78);
+    border-radius: 0.5rem;
+    background: #fff;
+    box-shadow: 0 15px 38px rgba(30, 64, 175, 0.11);
+  }
+
+  .journey-media-settings,
+  .journey-media-feedback {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .journey-media-settings {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .journey-media-feedback {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
   }
 
   @media (prefers-reduced-motion: no-preference) {
@@ -417,12 +537,6 @@
       animation: title-shift 9s ease-in-out infinite alternate;
     }
 
-    .screen-card {
-      transition:
-        transform 0.22s ease,
-        border-color 0.22s ease,
-        box-shadow 0.22s ease;
-    }
   }
 
   @media (max-width: 1024px) {
@@ -439,6 +553,21 @@
       top: auto;
       min-height: 18rem;
     }
+
+    .journey-display {
+      min-height: 0;
+    }
+
+    .journey-detail-copy {
+      flex-wrap: wrap;
+    }
+
+    .journey-detail-copy p {
+      flex-basis: 100%;
+      padding-top: 0.5rem;
+      padding-left: 0;
+      border-left: 0;
+    }
   }
 
   @media (max-width: 720px) {
@@ -452,6 +581,19 @@
 
     .feature-line-icon {
       display: none;
+    }
+
+    .journey-steps {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .journey-step:nth-child(3) {
+      border-left: 0;
+    }
+
+    .journey-media-settings,
+    .journey-media-feedback {
+      grid-template-columns: 1fr;
     }
   }
 

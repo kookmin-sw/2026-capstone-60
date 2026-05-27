@@ -4,7 +4,6 @@ import {
   Bot,
   BrainCircuit,
   CheckCircle2,
-  ClipboardList,
   Cloud,
   Database,
   FileText,
@@ -17,8 +16,8 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react";
-import { motion, useReducedMotion, useScroll, useTransform, type Variants } from "framer-motion";
-import { useRef } from "react";
+import { AnimatePresence, motion, useReducedMotion, useScroll, useSpring, useTransform, type Variants } from "framer-motion";
+import { useEffect, useRef, useState } from "react";
 import { ScrollToTop } from "./components/ScrollToTop";
 import "./App.css";
 
@@ -82,23 +81,23 @@ type Feature = {
   icon: LucideIcon;
 };
 
-type FlowStep = {
-  step: string;
-  title: string;
-  description: string;
-  icon: LucideIcon;
-};
-
 type TechGroup = {
   title: string;
   items: string[];
   icon: LucideIcon;
 };
 
+type JourneyStep = {
+  step: string;
+  title: string;
+  description: string;
+  images: { src: string; alt: string }[];
+  layout: "single" | "settings" | "wide" | "feedback";
+};
+
 const navItems = [
   { label: "문제 정의", href: "#problem" },
   { label: "주요 기능", href: "#features" },
-  { label: "사용 흐름", href: "#flow" },
   { label: "구조", href: "#architecture" },
   { label: "기술", href: "#tech-stack" },
   { label: "팀", href: "#team" },
@@ -143,77 +142,55 @@ const features: Feature[] = [
   },
 ];
 
-const flowSteps: FlowStep[] = [
+const journeySteps: JourneyStep[] = [
   {
     step: "01",
-    title: "이력서 등록",
-    description: "PDF 또는 텍스트로 이력서와 자기소개서를 등록합니다.",
-    icon: FileText,
+    title: "서비스 시작",
+    description: "최신 면접 데이터와 개인 이력을 바탕으로 연습을 시작하는 메인 화면",
+    images: [
+      { src: new URL("../ivterview_images/1_main.png", import.meta.url).href, alt: "Intertalk 메인 화면" },
+    ],
+    layout: "single",
   },
   {
     step: "02",
-    title: "면접 설정",
-    description: "지원 직무, 면접 시간, 참여 인원을 선택합니다.",
-    icon: ClipboardList,
+    title: "면접 조건 설정",
+    description: "면접 방식, 직무, 이력서와 시간을 선택해 나에게 맞는 세션을 준비하는 과정",
+    images: [
+      { src: new URL("../ivterview_images/2_select1.png", import.meta.url).href, alt: "면접 유형 선택 화면" },
+      { src: new URL("../ivterview_images/2_select2.png", import.meta.url).href, alt: "직무 선택 화면" },
+      { src: new URL("../ivterview_images/2_select3.png", import.meta.url).href, alt: "이력서 선택 화면" },
+      { src: new URL("../ivterview_images/2_select4.png", import.meta.url).href, alt: "면접 시간 선택 화면" },
+    ],
+    layout: "settings",
   },
   {
     step: "03",
-    title: "마이크 테스트",
-    description: "음성 면접을 시작하기 전에 마이크 상태를 확인합니다.",
-    icon: Radio,
+    title: "실시간 AI 면접",
+    description: "질문과 남은 시간을 확인하며 음성으로 답변하고, 진행 기록을 함께 확인하는 면접 화면",
+    images: [
+      { src: new URL("../ivterview_images/3_interview.png", import.meta.url).href, alt: "실시간 AI 면접 화면" },
+    ],
+    layout: "wide",
   },
   {
     step: "04",
-    title: "AI 면접 진행",
-    description: "AI 면접관이 질문을 제시하고, 사용자는 제한 시간 안에 음성으로 답변합니다.",
-    icon: Bot,
-  },
-  {
-    step: "05",
-    title: "꼬리질문 응답",
-    description: "답변이 부족하거나 더 확인할 부분이 있으면 AI가 추가 질문을 이어갑니다.",
-    icon: GitBranch,
-  },
-  {
-    step: "06",
-    title: "결과 리포트 확인",
-    description: "면접 종료 후 종합 피드백, 질문별 분석, 모범 답안을 확인합니다.",
-    icon: BarChart3,
+    title: "결과와 피드백",
+    description: "종합 평가와 역량 분석을 통해 강점, 약점과 다음 연습 방향을 확인하는 리포트",
+    images: [
+      { src: new URL("../ivterview_images/4_feedback1.png", import.meta.url).href, alt: "면접 피드백 종합 평가 화면" },
+      { src: new URL("../ivterview_images/4_feedback2.png", import.meta.url).href, alt: "면접 피드백 상세 분석 화면" },
+    ],
+    layout: "feedback",
   },
 ];
 
-const screenshotPlaceholders = [
-  {
-    title: "Home",
-    subtitle: "서비스 진입과 면접 시작",
-    lines: ["Realtime AI Mock Interview", "AI 면접 시작", "이전 기록 보기"],
-  },
-  {
-    title: "Resume",
-    subtitle: "이력서 등록과 관리",
-    lines: ["resume_backend.pdf", "Spring, Redis, AWS", "문서 선택 완료"],
-  },
-  {
-    title: "Setup",
-    subtitle: "직무와 면접 시간 설정",
-    lines: ["BACKEND", "15분", "그룹 2명"],
-  },
-  {
-    title: "Interview Room",
-    subtitle: "실시간 음성 면접",
-    lines: ["Q3. Redis 선택 이유는?", "남은 답변 시간 01:12", "마이크 ON"],
-  },
-  {
-    title: "Result",
-    subtitle: "질문별 피드백 리포트",
-    lines: ["논리성 8.5", "모범 답안 비교", "개선 방향"],
-  },
-  {
-    title: "Group Lobby",
-    subtitle: "대기실과 Ready 상태",
-    lines: ["Host ready", "Guest ready", "자동 시작 대기"],
-  },
-];
+const journeyMediaClasses: Record<JourneyStep["layout"], string> = {
+  single: "journey-media journey-media-single",
+  settings: "journey-media journey-media-settings",
+  wide: "journey-media journey-media-wide",
+  feedback: "journey-media journey-media-feedback",
+};
 
 const techGroups: TechGroup[] = [
   {
@@ -233,7 +210,7 @@ const techGroups: TechGroup[] = [
   },
   {
     title: "Realtime & Infra",
-    items: ["LiveKit", "WebRTC", "STT/TTS", "AWS EC2", "pgvector", "GitHub Actions"],
+    items: ["LiveKit", "WebRTC", "STT/TTS", "AWS EC2", "GitHub Actions"],
     icon: Cloud,
   },
 ];
@@ -256,7 +233,12 @@ const repositories = [
   },
 ];
 
-const teamMembers = ["김준범", "정은미", "최현택", "함태원"];
+const teamMembers = [
+  { name: "김준범", github: "https://github.com/Silbet", avatar: "https://github.com/Silbet.png" },
+  { name: "최현택", github: "https://github.com/cuixianze", avatar: "https://github.com/cuixianze.png" },
+  { name: "정은미", github: "https://github.com/eunmiii", avatar: "https://github.com/eunmiii.png" },
+  { name: "함태원", github: "https://github.com/HTW01", avatar: "https://github.com/HTW01.png" },
+];
 
 function SectionHeader({
   title,
@@ -398,10 +380,10 @@ function Hero() {
             {[
               ["이력서·자소서", "개인 자료 기반 질문"],
               ["음성 면접", "말로 답변하는 연습"],
-              ["1:1·그룹", "혼자 또는 함께 진행"],
+              ["1:1 · 그룹", "혼자 또는 함께 진행"],
             ].map(([value, label]) => (
               <div key={label} className="rounded-lg border border-blue-100 bg-white p-4 shadow-sm">
-                <strong className="block text-2xl font-black text-blue-700">{value}</strong>
+                <strong className="block whitespace-nowrap text-xl font-black text-blue-700">{value}</strong>
                 <span className="mt-1 block text-sm font-medium text-slate-500">{label}</span>
               </div>
             ))}
@@ -440,7 +422,7 @@ function ProblemSolution() {
         >
           <p className="mb-4 text-sm font-black uppercase tracking-[0.18em] text-yellow-600">Problem</p>
           <h2 className="text-3xl font-black leading-tight text-slate-950 md:text-4xl">
-            혼자 준비하면 내 프로젝트 질문을 놓치기 쉽습니다.
+            놓치기 쉬운 내 프로젝트 질문
           </h2>
           <p className="mt-6 leading-8 text-slate-600">
             개발자 면접에서는 개념을 아는지보다, 내가 만든 프로젝트에서 어떤 선택을 했고
@@ -462,7 +444,7 @@ function ProblemSolution() {
         >
           <p className="mb-4 text-sm font-black uppercase tracking-[0.18em] text-blue-700">Solution</p>
           <h2 className="text-3xl font-black leading-tight text-slate-950 md:text-4xl">
-            Intertalk은 이력서와 자기소개서에서 질문을 시작합니다.
+            이력서와 자기소개서에서 시작되는 맞춤 질문
           </h2>
           <p className="mt-6 leading-8 text-slate-600">
             사용자가 등록한 자료에서 프로젝트 경험과 기술 스택을 읽고, 실제 면접 후기
@@ -479,25 +461,79 @@ function ProblemSolution() {
 }
 
 function Features() {
+  const showcaseRef = useRef<HTMLDivElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const reduceMotion = useReducedMotion();
+  const [previewTravel, setPreviewTravel] = useState(0);
+  const [animatePreview, setAnimatePreview] = useState(false);
+  const { scrollYProgress } = useScroll({
+    target: showcaseRef,
+    offset: ["start 35%", "end 70%"],
+  });
+  const rawPreviewY = useTransform(
+    scrollYProgress,
+    [0, 0.14, 0.88, 1],
+    [0, 0, previewTravel, previewTravel],
+  );
+  const previewY = useSpring(rawPreviewY, {
+    stiffness: 95,
+    damping: 28,
+    mass: 0.5,
+  });
+
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 1025px)");
+    const update = () => {
+      setAnimatePreview(media.matches);
+      if (!previewRef.current || !listRef.current) {
+        return;
+      }
+
+      setPreviewTravel(Math.max(0, listRef.current.offsetHeight - previewRef.current.offsetHeight));
+    };
+    const observer = new ResizeObserver(update);
+
+    if (previewRef.current) {
+      observer.observe(previewRef.current);
+    }
+    if (listRef.current) {
+      observer.observe(listRef.current);
+    }
+
+    media.addEventListener("change", update);
+    update();
+
+    return () => {
+      observer.disconnect();
+      media.removeEventListener("change", update);
+    };
+  }, []);
+
   return (
-    <section id="features" className="relative overflow-hidden py-24">
+    <section id="features" className="relative overflow-clip py-24">
       <div className="container">
         <SectionHeader
-          title="준비 과정은 줄이고, 연습은 실제처럼."
-          description="이력서 등록부터 질문 생성, 음성 답변, 면접 후 피드백까지 기술 면접 연습에 필요한 흐름을 한 번에 이어지게 만들었습니다."
+          title="준비는 짧게, 면접은 실제처럼"
+          description="이력서 등록, 질문 생성, 음성 답변, 피드백까지 한 번에 이어지는 기술 면접 연습 흐름"
         />
         <motion.div
+          ref={showcaseRef}
           className="feature-showcase mt-14"
           initial="hidden"
           whileInView="visible"
           viewport={{ once: true, margin: "-80px" }}
           variants={stagger}
         >
-          <div className="feature-showcase-preview">
-            <p>interview loop</p>
-            <strong>자료 등록 → 질문 → 음성 답변 → 피드백</strong>
+          <div className="relative">
+            <motion.div
+              ref={previewRef}
+              style={{ y: animatePreview && !reduceMotion ? previewY : 0 }}
+            >
+              <FlowPreview />
+            </motion.div>
           </div>
-          <div className="feature-list">
+          <div ref={listRef} className="feature-list">
           {features.map((feature, index) => (
             <motion.article
               key={feature.title}
@@ -577,126 +613,63 @@ function FlowPreview() {
   );
 }
 
-function InterviewFlow() {
-  const ref = useRef<HTMLDivElement>(null);
-  const reduceMotion = useReducedMotion();
-  const { scrollYProgress } = useScroll({
-    target: ref,
-    offset: ["start center", "end center"],
-  });
-  const progressHeight = useTransform(scrollYProgress, [0, 1], ["0%", "100%"]);
-  const previewY = useTransform(scrollYProgress, [0, 1], reduceMotion ? [0, 0] : [18, -18]);
-  const previewRotate = useTransform(scrollYProgress, [0, 1], reduceMotion ? [0, 0] : [-1.5, 1.5]);
+function UserJourney() {
+  const [activeStep, setActiveStep] = useState(0);
+  const currentStep = journeySteps[activeStep];
 
   return (
-    <section id="flow" className="relative overflow-hidden py-24">
+    <section className="relative overflow-clip py-24">
       <div className="container">
         <SectionHeader
-          title="이력서를 올리고, 면접을 시작하고, 다시 확인합니다."
-          description="사용자는 자료를 등록하고 면접 조건을 고른 뒤, AI 면접관의 질문에 음성으로 답변합니다. 면접 후에는 질문별 피드백을 보며 부족한 부분을 다시 확인합니다."
-        />
-        <div ref={ref} className="mt-16 grid gap-10 lg:grid-cols-[0.95fr_1.05fr]">
-          <div className="relative">
-            <div className="absolute left-[1.15rem] top-0 hidden h-full w-px bg-blue-200/80 md:block" />
-            <motion.div
-              className="absolute left-[1.15rem] top-0 hidden w-px bg-blue-500 md:block"
-              style={{ height: progressHeight }}
-            />
-            <div className="space-y-2">
-              {flowSteps.map((item) => (
-                <motion.article
-                  key={item.step}
-                  className="flow-step-minimal"
-                  initial="hidden"
-                  whileInView="visible"
-                  viewport={{ once: true, margin: "-80px" }}
-                  variants={fadeUp}
-                >
-                  <div className="flow-step-number">{item.step}</div>
-                  <div className="flow-step-copy">
-                    <item.icon className="h-5 w-5 text-blue-700" />
-                    <h3>{item.title}</h3>
-                    <p>{item.description}</p>
-                  </div>
-                </motion.article>
-              ))}
-            </div>
-          </div>
-          <motion.div
-            className="self-start lg:sticky lg:top-24"
-            initial="hidden"
-            whileInView="visible"
-            viewport={{ once: true, margin: "-80px" }}
-            variants={fadeUp}
-            style={{ y: previewY, rotate: previewRotate }}
-          >
-            <FlowPreview />
-          </motion.div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function ScreenshotPlaceholders() {
-  return (
-    <section className="relative overflow-hidden py-24">
-      <div className="container">
-        <SectionHeader
-          title="서비스 화면은 이런 흐름으로 이어집니다."
-          description="홈, 이력서 등록, 면접 설정, 실시간 면접, 결과 리포트, 그룹 대기실까지 주요 사용 장면을 순서대로 정리했습니다."
+          title="실제 화면으로 보는 면접 흐름"
+          description="면접 시작부터 조건 설정, 실시간 답변, 결과 피드백까지 이어지는 Intertalk의 사용 과정"
         />
         <motion.div
-          className="mt-14 grid gap-5 md:grid-cols-2 xl:grid-cols-3"
+          className="journey-steps mt-14"
           initial="hidden"
           whileInView="visible"
           viewport={{ once: true, margin: "-80px" }}
           variants={stagger}
         >
-          {screenshotPlaceholders.map((screen) => (
-            <motion.article
-              key={screen.title}
-              className="screen-card group overflow-hidden rounded-lg border border-blue-100 bg-white/84 shadow-sm shadow-blue-900/5 backdrop-blur-xl"
-              variants={cardPop}
-              whileHover={{ y: -8, rotate: -0.35, transition: { duration: 0.22 } }}
+          {journeySteps.map((step, index) => (
+            <motion.button
+              key={step.step}
+              type="button"
+              className={`journey-step${activeStep === index ? " journey-step-active" : ""}`}
+              aria-pressed={activeStep === index}
+              onMouseEnter={() => setActiveStep(index)}
+              onFocus={() => setActiveStep(index)}
+              onClick={() => setActiveStep(index)}
+              variants={fadeUp}
             >
-              <div className="border-b border-blue-100 bg-blue-50/80 px-4 py-3">
-                <div className="flex gap-2">
-                  <span className="h-2.5 w-2.5 rounded-full bg-red-300" />
-                  <span className="h-2.5 w-2.5 rounded-full bg-yellow-300" />
-                  <span className="h-2.5 w-2.5 rounded-full bg-green-300" />
-                </div>
-              </div>
-              <div className="p-5">
-                <p className="text-sm font-black uppercase tracking-[0.18em] text-blue-700">
-                  {screen.title}
-                </p>
-                <h3 className="mt-2 text-xl font-black text-slate-950">{screen.subtitle}</h3>
-                <div className="mt-5 space-y-3">
-                  {screen.lines.map((line, index) => (
-                    <div
-                      key={line}
-                      className="flex items-center justify-between rounded-lg border border-blue-100 bg-[#f8faff] p-3 transition group-hover:border-blue-200"
-                    >
-                      <span className="text-sm font-semibold text-slate-700">{line}</span>
-                      <motion.span
-                        className={
-                          index === 1
-                            ? "h-2 w-14 rounded-lg bg-yellow-300"
-                            : "h-2 w-10 rounded-lg bg-blue-300"
-                        }
-                        initial={{ scaleX: 0.65, transformOrigin: "left" }}
-                        whileInView={{ scaleX: 1 }}
-                        viewport={{ once: true }}
-                        transition={{ duration: 0.6, delay: index * 0.08 }}
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </motion.article>
+              <span className="journey-step-number">{step.step}</span>
+              <span className="journey-step-title">{step.title}</span>
+            </motion.button>
           ))}
         </motion.div>
+        <div className="journey-display mt-9">
+          <AnimatePresence mode="wait">
+            <motion.article
+              key={currentStep.step}
+              className="journey-detail"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.24, ease: "easeOut" }}
+            >
+              <div className="journey-detail-copy">
+                <span className="journey-detail-number">{currentStep.step}</span>
+                <h3>{currentStep.title}</h3>
+                <p>{currentStep.description}</p>
+              </div>
+              <div className={journeyMediaClasses[currentStep.layout]}>
+                {currentStep.images.map((image) => (
+                  <img key={image.src} src={image.src} alt={image.alt} />
+                ))}
+              </div>
+            </motion.article>
+          </AnimatePresence>
+        </div>
       </div>
     </section>
   );
@@ -716,8 +689,8 @@ function Architecture() {
     <section id="architecture" className="relative overflow-hidden py-24">
       <div className="container">
         <SectionHeader
-          title="화면, 서버, 음성 면접, 질문 생성을 나누어 설계했습니다."
-          description="사용자 화면, 로그인과 면접 세션, 실시간 음성 연결, 질문 생성 흐름을 분리해 각 영역의 역할이 명확하도록 구성했습니다."
+          title="면접 흐름을 잇는 시스템 구조"
+          description="사용자 화면, 세션 제어, 실시간 음성 연결, AI 질문 생성이 어떤 순서로 연결되는지 보여주는 구조도"
         />
         <motion.div
           className="glass-panel mt-14 rounded-lg p-5 md:p-8"
@@ -779,8 +752,8 @@ function TechStack() {
     <section id="tech-stack" className="relative overflow-hidden py-24">
       <div className="container">
         <SectionHeader
-          title="각 기능에 맞는 기술을 선택했습니다."
-          description="React 기반 화면, Spring Boot 서버, LiveKit 음성 연결, Bedrock 기반 질문 생성 흐름으로 서비스를 구성했습니다."
+          title="사용 기술"
+          description="화면, 서버, 실시간 음성 연결, AI 질문 생성을 구성하는 주요 기술 스택"
         />
         <div className="mt-14 grid gap-5 lg:grid-cols-2">
           {techGroups.map((group) => (
@@ -834,17 +807,22 @@ function Team() {
           variants={stagger}
         >
           {teamMembers.map((member) => (
-            <motion.div
-              key={member}
-              className="glass-panel rounded-lg p-6 text-center"
+            <motion.a
+              key={member.github}
+              className="glass-panel block rounded-lg p-6 text-center"
+              href={member.github}
+              target="_blank"
+              rel="noreferrer"
               variants={cardPop}
               whileHover={{ y: -6, transition: { duration: 0.2 } }}
             >
-              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-yellow-100 text-xl font-black text-yellow-700">
-                {member.slice(0, 1)}
-              </div>
-              <p className="mt-4 text-lg font-black text-slate-950">{member}</p>
-            </motion.div>
+              <img
+                className="mx-auto h-14 w-14 rounded-lg object-cover shadow-sm"
+                src={member.avatar}
+                alt={`${member.name} GitHub profile`}
+              />
+              <p className="mt-4 text-lg font-black text-slate-950">{member.name}</p>
+            </motion.a>
           ))}
         </motion.div>
       </div>
@@ -901,8 +879,7 @@ function App() {
           <Hero />
           <ProblemSolution />
           <Features />
-          <InterviewFlow />
-          <ScreenshotPlaceholders />
+          <UserJourney />
           <Architecture />
           <TechStack />
           <Team />
